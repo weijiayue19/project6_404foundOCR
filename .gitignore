@@ -1,0 +1,31 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+demos/
+# OCR output
+sougououtput/
+SogouOutput/
+output/
+
+# IDE files
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+# Agent / Codex local files
+.agents/
+.claude/
+CLAUDE.md
+AGENTS.md
+# data files
+data/
