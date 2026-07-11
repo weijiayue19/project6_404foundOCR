@@ -60,17 +60,21 @@ from src.gui.pixel_theme import (
 )
 from src.models.ocr_result import OcrResult, TextBlock
 from src.search_manager import OCRSearchManager
-from src.gui.window_utils import create_independent_window
+from src.gui.window_utils import create_independent_window, focus_existing_window, show_centered_window
 
 
 def open_history_search_window(
     parent: tk.Tk,
     ui_font_family: str,
     initial_display_mode: str = DISPLAY_MODE_PLAIN,
-) -> None:
+) -> tk.Toplevel:
     """打开历史查询窗口，查询逻辑委托给 OCRSearchManager。"""
 
+    existing_window = getattr(parent, "_ocr_history_search_window", None)
+    if focus_existing_window(existing_window):
+        return existing_window
     window = create_independent_window("本地 OCR - 历史查询")
+    setattr(parent, "_ocr_history_search_window", window)
     screen_width = window.winfo_screenwidth()
     screen_height = window.winfo_screenheight()
     width = min(1310, max(640, int(screen_width * 0.91)))
@@ -92,6 +96,9 @@ def open_history_search_window(
     gallery_photo_cache: dict[str, ImageTk.PhotoImage | None] = {}
     gallery_photo_failed_keys: set[str] = set()
     gallery_thumbnail_after_id: str | None = None
+    gallery_render_after_id: str | None = None
+    gallery_last_layout: tuple[int, int] | None = None
+    gallery_scroll_idle_after_id: str | None = None
     preview_image_cache: dict[str, Image.Image | None] = {}
     gallery_bounds: list[tuple[int, int, int, int]] = []
     preview_photo: ImageTk.PhotoImage | None = None
@@ -116,7 +123,8 @@ def open_history_search_window(
     def close_window() -> None:
         wheel_manager.unbind()
         _cancel_gallery_thumbnail_generation()
-        window.destroy()
+        _cancel_gallery_render()
+        window.withdraw()
 
     header = ttk.Frame(window, padding=(4, 5), style="App.TFrame")
     header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=18, pady=(16, 0))
@@ -204,7 +212,7 @@ def open_history_search_window(
     gallery_header.columnconfigure(2, weight=1)
     history_title_button = CutCornerButton(
         gallery_header,
-        text="历史图片",
+        text="历史记录",
         command=lambda: _open_history_manage_dialog(),
         variant="default",
         font_family=ui_font_family,
@@ -252,7 +260,7 @@ def open_history_search_window(
     preview_frame.grid(row=1, column=1, sticky="nsew", padx=(0, 18), pady=(12, 8))
     preview_frame.columnconfigure(0, weight=1)
     preview_frame.rowconfigure(1, weight=1)
-    ttk.Label(preview_frame, text="图片预览", style="PanelTitle.TLabel").grid(
+    ttk.Label(preview_frame, text="文件预览", style="PanelTitle.TLabel").grid(
         row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
     )
     preview_canvas = tk.Canvas(
@@ -412,7 +420,33 @@ def open_history_search_window(
             return record_id or None
         return None
 
+    def _schedule_gallery_render(delay_ms: int = 16) -> None:
+        nonlocal gallery_render_after_id
+        if gallery_render_after_id is not None:
+            return
+        gallery_render_after_id = window.after(delay_ms, _run_scheduled_gallery_render)
+
+    def _run_scheduled_gallery_render() -> None:
+        nonlocal gallery_render_after_id
+        gallery_render_after_id = None
+        if window.winfo_exists() and gallery_canvas.winfo_exists():
+            _render_gallery()
+
+    def _cancel_gallery_render() -> None:
+        nonlocal gallery_render_after_id, gallery_scroll_idle_after_id
+        for after_id in (gallery_render_after_id, gallery_scroll_idle_after_id):
+            if after_id is None:
+                continue
+            try:
+                window.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        gallery_render_after_id = None
+        gallery_scroll_idle_after_id = None
+
     def _render_gallery() -> None:
+        nonlocal gallery_last_layout
+        current_yview = gallery_canvas.yview()[0]
         gallery_canvas.delete("all")
         gallery_photos.clear()
         gallery_bounds.clear()
@@ -429,6 +463,7 @@ def open_history_search_window(
             )
             draw_pixel_dino(gallery_canvas, 18, 18, 2, foreground=INK, eye_color=PAPER)
             gallery_canvas.configure(scrollregion=(0, 0, 360, 120))
+            gallery_last_layout = (0, 360)
             return
 
         card_width = GALLERY_CARD_WIDTH
@@ -486,7 +521,14 @@ def open_history_search_window(
         total_rows = (len(candidates) + columns - 1) // columns
         content_height = padding + total_rows * (card_height + gap)
         content_width = padding * 2 + grid_width
-        gallery_canvas.configure(scrollregion=(0, 0, max(content_width, canvas_width), max(content_height, gallery_canvas.winfo_height())))
+        scrollregion = (0, 0, max(content_width, canvas_width), max(content_height, gallery_canvas.winfo_height()))
+        gallery_canvas.configure(scrollregion=scrollregion)
+        gallery_last_layout = (columns, canvas_width)
+        visible_height = max(float(gallery_canvas.winfo_height()), 1.0)
+        scrollable_height = max(float(scrollregion[3]) - visible_height, 1.0)
+        target_yview = min(current_yview, max(0.0, scrollable_height / float(scrollregion[3])))
+        if target_yview > 0.0:
+            gallery_canvas.yview_moveto(target_yview)
         if needs_thumbnail_generation:
             _schedule_gallery_thumbnail_generation()
 
@@ -498,6 +540,15 @@ def open_history_search_window(
         if gallery_thumbnail_after_id is not None:
             return
         gallery_thumbnail_after_id = window.after(10, _generate_next_gallery_thumbnail)
+
+    def _delay_gallery_thumbnail_generation() -> None:
+        nonlocal gallery_thumbnail_after_id
+        if gallery_thumbnail_after_id is not None:
+            try:
+                window.after_cancel(gallery_thumbnail_after_id)
+            except tk.TclError:
+                pass
+        gallery_thumbnail_after_id = window.after(120, _generate_next_gallery_thumbnail)
 
     def _cancel_gallery_thumbnail_generation() -> None:
         nonlocal gallery_thumbnail_after_id
@@ -534,7 +585,8 @@ def open_history_search_window(
             gallery_photo_failed_keys.add(key)
         else:
             gallery_photo_cache[key] = photo
-        _render_gallery()
+        _schedule_gallery_render(60)
+        _schedule_gallery_thumbnail_generation()
 
     def _thumbnail_photo_for(index: int, record: dict[str, object]) -> ImageTk.PhotoImage | None:
         key = _gallery_record_key(index, record)
@@ -687,29 +739,8 @@ def open_history_search_window(
         preview_label.configure(image=preview_photo, text="")
         _sync_preview_scrollregion()
 
-    def _center_dialog(dialog: tk.Toplevel, owner: tk.Misc | None = None) -> None:
-        parent_window = owner or window
-        parent_window.update_idletasks()
-        dialog.update_idletasks()
-        parent_x = parent_window.winfo_rootx()
-        parent_y = parent_window.winfo_rooty()
-        parent_width = max(parent_window.winfo_width(), 1)
-        parent_height = max(parent_window.winfo_height(), 1)
-        dialog_width = max(dialog.winfo_width(), dialog.winfo_reqwidth(), 1)
-        dialog_height = max(dialog.winfo_height(), dialog.winfo_reqheight(), 1)
-        x = parent_x + max((parent_width - dialog_width) // 2, 0)
-        y = parent_y + max((parent_height - dialog_height) // 2, 0)
-        dialog.geometry(f"+{x}+{y}")
-
-    def _show_centered_dialog(dialog: tk.Toplevel, owner: tk.Misc | None = None) -> None:
-        _center_dialog(dialog, owner)
-        dialog.deiconify()
-        dialog.lift()
-        dialog.focus_set()
-
     def _open_date_range_dialog() -> bool:
         nonlocal date_range_start, date_range_end, custom_range_newest_first
-        dialog = create_independent_window("自定义搜索范围", resizable=False)
 
         def history_date_bounds() -> tuple[date, date]:
             records = searcher.search_records(keyword="", newest_first=False)
@@ -723,8 +754,8 @@ def open_history_search_window(
                 except ValueError:
                     continue
             if not dates:
-                today = date.today()
-                return today, today
+                today_value = date.today()
+                return today_value, today_value
             return min(dates), max(dates)
 
         today = date.today()
@@ -736,172 +767,230 @@ def open_history_search_window(
             start_default = earliest_day
             end_default = latest_day
 
-        result: dict[str, tuple[str | None, str | None] | None] = {"value": None}
-        order_newest_first = tk.BooleanVar(value=custom_range_newest_first)
+        dialog = getattr(window, "_ocr_date_range_window", None)
+        controls: dict[str, object]
+        if dialog is None or not focus_existing_window(dialog):
+            dialog = create_independent_window("自定义搜索范围", resizable=False)
+            setattr(window, "_ocr_date_range_window", dialog)
+            controls = {}
+            setattr(dialog, "_history_date_controls", controls)
 
-        body = PixelBorderFrame(dialog, padding=14, background=PANEL)
-        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
-        ttk.Label(body, text="选择历史记录时间范围", style="PanelTitle.TLabel").grid(
-            row=0,
-            column=0,
-            columnspan=6,
-            sticky="w",
-            pady=(0, 12),
-        )
-        years = tuple(str(year) for year in range(today.year - 10, today.year + 2))
-        months = tuple(f"{month:02d}" for month in range(1, 13))
-
-        def make_date_row(
-            row: int,
-            title: str,
-            initial: date,
-        ) -> tuple[tk.StringVar, tk.StringVar, tk.StringVar, object]:
-            year_var = tk.StringVar(value=str(initial.year))
-            month_var = tk.StringVar(value=f"{initial.month:02d}")
-            day_var = tk.StringVar(value=f"{initial.day:02d}")
-            ttk.Label(body, text=title, style="PanelMuted.TLabel").grid(row=row, column=0, sticky="w", pady=6)
-            year_box = ttk.Combobox(
-                body,
-                textvariable=year_var,
-                values=years,
-                width=6,
-                state="readonly",
-                style="Pixel.TCombobox",
+            body = PixelBorderFrame(dialog, padding=14, background=PANEL)
+            body.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+            ttk.Label(body, text="选择历史记录时间范围", style="PanelTitle.TLabel").grid(
+                row=0,
+                column=0,
+                columnspan=6,
+                sticky="w",
+                pady=(0, 12),
             )
-            year_box.grid(row=row, column=1, padx=(8, 4))
-            ttk.Label(body, text="年", style="PanelMuted.TLabel").grid(row=row, column=2)
-            month_box = ttk.Combobox(body, textvariable=month_var, values=months, width=4, state="readonly", style="Pixel.TCombobox")
-            month_box.grid(row=row, column=3, padx=(8, 4))
-            ttk.Label(body, text="月", style="PanelMuted.TLabel").grid(row=row, column=4)
-            day_box = ttk.Combobox(body, textvariable=day_var, width=4, state="readonly", style="Pixel.TCombobox")
-            day_box.grid(row=row, column=5, padx=(8, 4))
+            years = tuple(str(year) for year in range(today.year - 10, today.year + 2))
+            months = tuple(f"{month:02d}" for month in range(1, 13))
 
-            def refresh_days(_event: tk.Event | None = None) -> None:
-                day_count = calendar.monthrange(int(year_var.get()), int(month_var.get()))[1]
-                values = tuple(f"{day:02d}" for day in range(1, day_count + 1))
-                day_box.configure(values=values)
-                if int(day_var.get()) > day_count:
-                    day_var.set(f"{day_count:02d}")
-
-            refresh_days()
-            month_box.bind("<<ComboboxSelected>>", refresh_days)
-            year_box.bind("<<ComboboxSelected>>", refresh_days)
-            return year_var, month_var, day_var, refresh_days
-
-        start_vars = make_date_row(1, "开始时间", start_default)
-        end_vars = make_date_row(2, "结束时间", end_default)
-
-        range_note = tk.StringVar(value=format_history_date_range(date_range_start, date_range_end) or "选择后将按整天范围搜索")
-        ttk.Label(body, textvariable=range_note, style="PanelMuted.TLabel").grid(
-            row=3,
-            column=0,
-            columnspan=6,
-            sticky="w",
-            pady=(12, 0),
-        )
-
-        def draw_order_option(canvas: tk.Canvas, *, selected: bool, text: str) -> None:
-            canvas.delete("all")
-            fill = "#fffdf7" if selected else "#f7f6f1"
-            outline = INK if selected else GRID
-            canvas.create_rectangle(3, 4, 113, 33, fill="#e6e4dd", outline="")
-            canvas.create_rectangle(0, 0, 110, 29, fill=fill, outline=outline, width=2 if selected else 1)
-            canvas.create_rectangle(10, 7, 26, 23, fill=PANEL, outline=INK, width=1)
-            if selected:
-                canvas.create_line(
-                    13,
-                    15,
-                    17,
-                    20,
-                    25,
-                    10,
-                    fill=INK,
-                    width=3,
-                    smooth=False,
-                    joinstyle=tk.ROUND,
-                    capstyle=tk.ROUND,
+            def make_date_row(
+                row: int,
+                title: str,
+                initial: date,
+            ) -> tuple[tk.StringVar, tk.StringVar, tk.StringVar, object]:
+                year_var = tk.StringVar(value=str(initial.year))
+                month_var = tk.StringVar(value=f"{initial.month:02d}")
+                day_var = tk.StringVar(value=f"{initial.day:02d}")
+                ttk.Label(body, text=title, style="PanelMuted.TLabel").grid(row=row, column=0, sticky="w", pady=6)
+                year_box = ttk.Combobox(
+                    body,
+                    textvariable=year_var,
+                    values=years,
+                    width=6,
+                    state="readonly",
+                    style="Pixel.TCombobox",
                 )
-            canvas.create_text(38, 15, text=text, fill=INK, anchor=tk.W, font=(ui_font_family, 10, "bold"))
+                year_box.grid(row=row, column=1, padx=(8, 4))
+                ttk.Label(body, text="年", style="PanelMuted.TLabel").grid(row=row, column=2)
+                month_box = ttk.Combobox(body, textvariable=month_var, values=months, width=4, state="readonly", style="Pixel.TCombobox")
+                month_box.grid(row=row, column=3, padx=(8, 4))
+                ttk.Label(body, text="月", style="PanelMuted.TLabel").grid(row=row, column=4)
+                day_box = ttk.Combobox(body, textvariable=day_var, width=4, state="readonly", style="Pixel.TCombobox")
+                day_box.grid(row=row, column=5, padx=(8, 4))
 
-        order_row = ttk.Frame(body, style="Panel.TFrame")
-        order_row.grid(row=4, column=0, columnspan=6, sticky="w", pady=(12, 0))
-        ttk.Label(order_row, text="时间顺序", style="PanelMuted.TLabel").pack(side=tk.LEFT, padx=(0, 8))
-        ascending_option = tk.Canvas(order_row, width=114, height=34, background=PANEL, highlightthickness=0, cursor="hand2")
-        descending_option = tk.Canvas(order_row, width=114, height=34, background=PANEL, highlightthickness=0, cursor="hand2")
-        ascending_option.pack(side=tk.LEFT, padx=(0, 8))
-        descending_option.pack(side=tk.LEFT)
+                def refresh_days(_event: tk.Event | None = None) -> None:
+                    day_count = calendar.monthrange(int(year_var.get()), int(month_var.get()))[1]
+                    values = tuple(f"{day:02d}" for day in range(1, day_count + 1))
+                    day_box.configure(values=values)
+                    if int(day_var.get()) > day_count:
+                        day_var.set(f"{day_count:02d}")
 
-        def refresh_order_options() -> None:
-            draw_order_option(ascending_option, selected=not order_newest_first.get(), text="递增")
-            draw_order_option(descending_option, selected=order_newest_first.get(), text="递减")
+                refresh_days()
+                month_box.bind("<<ComboboxSelected>>", refresh_days)
+                year_box.bind("<<ComboboxSelected>>", refresh_days)
+                return year_var, month_var, day_var, refresh_days
 
-        def choose_order(newest_first: bool) -> None:
-            order_newest_first.set(newest_first)
+            start_vars = make_date_row(1, "开始时间", start_default)
+            end_vars = make_date_row(2, "结束时间", end_default)
+
+            range_note = tk.StringVar(value=format_history_date_range(date_range_start, date_range_end) or "选择后将按整天范围搜索")
+            ttk.Label(body, textvariable=range_note, style="PanelMuted.TLabel").grid(
+                row=3,
+                column=0,
+                columnspan=6,
+                sticky="w",
+                pady=(12, 0),
+            )
+            order_newest_first = tk.BooleanVar(value=custom_range_newest_first)
+            done_var = tk.IntVar(value=0)
+            controls.update({
+                "start_vars": start_vars,
+                "end_vars": end_vars,
+                "range_note": range_note,
+                "order_newest_first": order_newest_first,
+                "done_var": done_var,
+                "result": None,
+                "earliest_day": earliest_day,
+                "latest_day": latest_day,
+            })
+
+            def draw_order_option(canvas: tk.Canvas, *, selected: bool, text: str) -> None:
+                canvas.delete("all")
+                fill = "#fffdf7" if selected else "#f7f6f1"
+                outline = INK if selected else GRID
+                canvas.create_rectangle(3, 4, 113, 33, fill="#e6e4dd", outline="")
+                canvas.create_rectangle(0, 0, 110, 29, fill=fill, outline=outline, width=2 if selected else 1)
+                canvas.create_rectangle(10, 7, 26, 23, fill=PANEL, outline=INK, width=1)
+                if selected:
+                    canvas.create_line(
+                        13,
+                        15,
+                        17,
+                        20,
+                        25,
+                        10,
+                        fill=INK,
+                        width=3,
+                        smooth=False,
+                        joinstyle=tk.ROUND,
+                        capstyle=tk.ROUND,
+                    )
+                canvas.create_text(38, 15, text=text, fill=INK, anchor=tk.W, font=(ui_font_family, 10, "bold"))
+
+            order_row = ttk.Frame(body, style="Panel.TFrame")
+            order_row.grid(row=4, column=0, columnspan=6, sticky="w", pady=(12, 0))
+            ttk.Label(order_row, text="时间顺序", style="PanelMuted.TLabel").pack(side=tk.LEFT, padx=(0, 8))
+            ascending_option = tk.Canvas(order_row, width=114, height=34, background=PANEL, highlightthickness=0, cursor="hand2")
+            descending_option = tk.Canvas(order_row, width=114, height=34, background=PANEL, highlightthickness=0, cursor="hand2")
+            ascending_option.pack(side=tk.LEFT, padx=(0, 8))
+            descending_option.pack(side=tk.LEFT)
+
+            def refresh_order_options() -> None:
+                draw_order_option(ascending_option, selected=not order_newest_first.get(), text="递增")
+                draw_order_option(descending_option, selected=order_newest_first.get(), text="递减")
+
+            def choose_order(newest_first: bool) -> None:
+                order_newest_first.set(newest_first)
+                refresh_order_options()
+
+            ascending_option.bind("<Button-1>", lambda _event: choose_order(False))
+            descending_option.bind("<Button-1>", lambda _event: choose_order(True))
             refresh_order_options()
 
-        ascending_option.bind("<Button-1>", lambda _event: choose_order(False))
-        descending_option.bind("<Button-1>", lambda _event: choose_order(True))
-        refresh_order_options()
-
-        def read_date(parts: tuple[tk.StringVar, tk.StringVar, tk.StringVar, object]) -> date:
-            return date(int(parts[0].get()), int(parts[1].get()), int(parts[2].get()))
-
-        def confirm() -> None:
-            nonlocal custom_range_newest_first
-            try:
-                result["value"] = build_history_day_bounds(read_date(start_vars), read_date(end_vars))
-            except ValueError as exc:
-                messagebox.showerror("时间范围无效", str(exc), parent=dialog)
-                return
-            custom_range_newest_first = order_newest_first.get()
-            dialog.destroy()
-
-        def clear_range() -> None:
-            start_parts = (earliest_day.year, earliest_day.month, earliest_day.day)
-            end_parts = (latest_day.year, latest_day.month, latest_day.day)
-            for parts, values in ((start_vars, start_parts), (end_vars, end_parts)):
-                parts[0].set(str(values[0]))
-                parts[1].set(f"{values[1]:02d}")
+            def set_date(parts: tuple[tk.StringVar, tk.StringVar, tk.StringVar, object], value: date) -> None:
+                parts[0].set(str(value.year))
+                parts[1].set(f"{value.month:02d}")
                 refresh_days = parts[3]
                 if callable(refresh_days):
                     refresh_days()
-                parts[2].set(f"{values[2]:02d}")
-            range_note.set(format_history_date_range(
-                f"{earliest_day.isoformat()}T00:00:00",
-                f"{latest_day.isoformat()}T23:59:59",
-            ))
+                parts[2].set(f"{value.day:02d}")
 
-        button_row = ttk.Frame(body, style="Panel.TFrame")
-        button_row.grid(row=5, column=0, columnspan=6, sticky="e", pady=(18, 0))
-        CutCornerButton(
-            button_row,
-            text="清除范围",
-            command=clear_range,
-            variant="default",
-            font_family=ui_font_family,
-            outer_background=PANEL,
-        ).pack(side=tk.LEFT, padx=(0, 8))
-        CutCornerButton(
-            button_row,
-            text="取消",
-            command=dialog.destroy,
-            variant="default",
-            font_family=ui_font_family,
-            outer_background=PANEL,
-        ).pack(side=tk.LEFT, padx=(0, 8))
-        CutCornerButton(
-            button_row,
-            text="确定",
-            command=confirm,
-            variant="primary",
-            font_family=ui_font_family,
-            outer_background=PANEL,
-        ).pack(side=tk.LEFT)
-        _show_centered_dialog(dialog)
-        dialog.wait_window()
-        if result["value"] is None:
+            def read_date(parts: tuple[tk.StringVar, tk.StringVar, tk.StringVar, object]) -> date:
+                return date(int(parts[0].get()), int(parts[1].get()), int(parts[2].get()))
+
+            def finish(value: tuple[str | None, str | None] | None) -> None:
+                controls["result"] = value
+                dialog.withdraw()
+                done_var.set(done_var.get() + 1)
+
+            def confirm() -> None:
+                nonlocal custom_range_newest_first
+                try:
+                    value = build_history_day_bounds(read_date(start_vars), read_date(end_vars))
+                except ValueError as exc:
+                    messagebox.showerror("时间范围无效", str(exc), parent=dialog)
+                    return
+                custom_range_newest_first = order_newest_first.get()
+                finish(value)
+
+            def clear_range() -> None:
+                current_earliest = controls["earliest_day"]
+                current_latest = controls["latest_day"]
+                if not isinstance(current_earliest, date) or not isinstance(current_latest, date):
+                    return
+                set_date(start_vars, current_earliest)
+                set_date(end_vars, current_latest)
+                range_note.set(format_history_date_range(
+                    f"{current_earliest.isoformat()}T00:00:00",
+                    f"{current_latest.isoformat()}T23:59:59",
+                ))
+
+            controls["set_date"] = set_date
+            controls["refresh_order_options"] = refresh_order_options
+
+            button_row = ttk.Frame(body, style="Panel.TFrame")
+            button_row.grid(row=5, column=0, columnspan=6, sticky="e", pady=(18, 0))
+            CutCornerButton(
+                button_row,
+                text="清除范围",
+                command=clear_range,
+                variant="default",
+                font_family=ui_font_family,
+                outer_background=PANEL,
+            ).pack(side=tk.LEFT, padx=(0, 8))
+            CutCornerButton(
+                button_row,
+                text="取消",
+                command=lambda: finish(None),
+                variant="default",
+                font_family=ui_font_family,
+                outer_background=PANEL,
+            ).pack(side=tk.LEFT, padx=(0, 8))
+            CutCornerButton(
+                button_row,
+                text="确定",
+                command=confirm,
+                variant="primary",
+                font_family=ui_font_family,
+                outer_background=PANEL,
+            ).pack(side=tk.LEFT)
+            dialog.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+        else:
+            controls = getattr(dialog, "_history_date_controls", {})
+
+        controls["earliest_day"] = earliest_day
+        controls["latest_day"] = latest_day
+        controls["result"] = None
+        done_var = controls.get("done_var")
+        if isinstance(done_var, tk.IntVar):
+            done_var.set(0)
+        set_date = controls.get("set_date")
+        start_vars = controls.get("start_vars")
+        end_vars = controls.get("end_vars")
+        if callable(set_date) and isinstance(start_vars, tuple) and isinstance(end_vars, tuple):
+            set_date(start_vars, start_default)
+            set_date(end_vars, end_default)
+        range_note = controls.get("range_note")
+        if isinstance(range_note, tk.StringVar):
+            range_note.set(format_history_date_range(date_range_start, date_range_end) or "选择后将按整天范围搜索")
+        order_newest_first = controls.get("order_newest_first")
+        if isinstance(order_newest_first, tk.BooleanVar):
+            order_newest_first.set(custom_range_newest_first)
+        refresh_order_options = controls.get("refresh_order_options")
+        if callable(refresh_order_options):
+            refresh_order_options()
+
+        show_centered_window(dialog, window)
+        if isinstance(done_var, tk.IntVar):
+            dialog.wait_variable(done_var)
+        result_value = controls.get("result")
+        if result_value is None:
             return False
-        date_range_start, date_range_end = result["value"]
+        date_range_start, date_range_end = result_value
         return True
 
     def _on_sort_mode_change(_event: tk.Event | None = None) -> None:
@@ -924,7 +1013,11 @@ def open_history_search_window(
     wheel_manager = WheelBindingManager()
 
     def _open_history_manage_dialog() -> None:
+        existing_manage = getattr(window, "_ocr_history_manage_window", None)
+        if focus_existing_window(existing_manage):
+            return
         manage = create_independent_window("历史记录编辑")
+        setattr(window, "_ocr_history_manage_window", manage)
         manage.columnconfigure(0, weight=1)
         manage.rowconfigure(1, weight=1)
 
@@ -1127,7 +1220,7 @@ def open_history_search_window(
                 outer_background=PANEL,
             ).pack(side=tk.LEFT)
             confirm_window.protocol("WM_DELETE_WINDOW", lambda: choose(False))
-            _show_centered_dialog(confirm_window, manage)
+            show_centered_window(confirm_window, manage)
             confirm_window.wait_window()
             return decision["confirmed"]
 
@@ -1203,7 +1296,7 @@ def open_history_search_window(
                 selected_ids.clear()
                 refresh_rows()
                 return
-            manage.destroy()
+            manage.withdraw()
 
         close_button = CutCornerButton(
             toolbar,
@@ -1221,12 +1314,30 @@ def open_history_search_window(
         refresh_rows()
         manage.protocol("WM_DELETE_WINDOW", close_manage)
         manage.geometry(f"{min(746, max(int(window.winfo_width() * 0.91), 520))}x{min(564, max(int(window.winfo_height() * 0.91), 380))}")
-        _show_centered_dialog(manage, window)
+        show_centered_window(manage, window)
 
     def _on_gallery_wheel(event: tk.Event) -> str:
         """支持 Windows 鼠标滚轮、macOS 触控板和 Linux Button-4/5。"""
 
-        return scroll_canvas_by_wheel(gallery_canvas, event)
+        nonlocal gallery_scroll_idle_after_id
+        if gallery_scroll_idle_after_id is not None:
+            try:
+                window.after_cancel(gallery_scroll_idle_after_id)
+            except tk.TclError:
+                pass
+        _delay_gallery_thumbnail_generation()
+        result = scroll_canvas_by_wheel(gallery_canvas, event)
+        first, last = gallery_canvas.yview()
+        if last >= 0.999:
+            gallery_canvas.yview_moveto(max(0.0, 1.0 - (last - first)))
+        gallery_scroll_idle_after_id = window.after(140, _resume_gallery_after_scroll)
+        return result
+
+    def _resume_gallery_after_scroll() -> None:
+        nonlocal gallery_scroll_idle_after_id
+        gallery_scroll_idle_after_id = None
+        _schedule_gallery_render(1)
+        _schedule_gallery_thumbnail_generation()
 
     def _on_detail_wheel(event: tk.Event) -> str:
         return scroll_text_by_wheel(detail_text, event)
@@ -1244,7 +1355,13 @@ def open_history_search_window(
         wheel_manager.bind(preview_canvas, _on_preview_wheel)
 
     def _on_gallery_resize(_event: tk.Event) -> None:
-        _render_gallery()
+        canvas_width = max(gallery_canvas.winfo_width(), GALLERY_CARD_WIDTH + GALLERY_PADDING * 2 + 8)
+        available_width = max(canvas_width - GALLERY_PADDING * 2, GALLERY_CARD_WIDTH)
+        columns = max(1, (available_width + 10) // (GALLERY_CARD_WIDTH + 10))
+        columns = min(columns, max(len(candidates), 1))
+        layout = (columns, canvas_width)
+        if layout != gallery_last_layout:
+            _schedule_gallery_render(60)
 
     search_icon.bind("<Button-1>", lambda _event: run_search())
     clear_search_button.bind("<Button-1>", lambda _event: clear_search())
@@ -1271,3 +1388,4 @@ def open_history_search_window(
     window.deiconify()
     window.lift()
     window.focus_set()
+    return window

@@ -54,7 +54,7 @@ def process_single_image(
     7. 保存中间图和最终处理图；
     8. 调用 PaddleOCR；
     9. 将识别文本和元数据写入 SQLite；
-    10. 从 SQLite 重建 HistoryBST，供命令行历史查询复用。
+    10. 直接统计 SQLite 历史记录数量。
     """
 
     config = normalize_options(options)
@@ -154,7 +154,7 @@ def process_single_image(
             region=config["crop_box"],
         ),
     )
-    history = _run_step("重建 HistoryBST", lambda: load_history_bst(storage))
+    history_size = _run_step("统计历史记录数量", storage.count_records)
 
     return {
         "success": True,
@@ -165,7 +165,7 @@ def process_single_image(
         "created_time": record["created_time"],
         "intermediate_paths": intermediate_paths,
         "processed_image_path": processed_image_path,
-        "history_size": history.size(),
+        "history_size": history_size,
     }
 
 
@@ -233,11 +233,6 @@ def _render_ocr_text(result: Any, mode: str) -> str:
         return str(render_text(mode))
     text = getattr(result, "text", result)
     return str(text)
-
-
-def _recognize_text(service: Any, processed_image_path: str) -> str:
-    result = service.recognize(processed_image_path)
-    return _render_ocr_text(result, "plain")
 
 
 def _record_to_history(record: dict[str, Any], recognized_text: str) -> OCRHistoryRecord:

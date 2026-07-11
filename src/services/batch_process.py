@@ -29,21 +29,44 @@ def run_batch_process(
         def send_progress(completed: int, total: int, task: OCRTask) -> None:
             output_queue.put(("progress", completed, total, task))
 
+        paths = [Path(path) for path in image_paths]
         if regions is None:
+            if preprocess_configs is None:
+                tasks = run_batch_recognition(
+                    engine,
+                    paths,
+                    mode,
+                    preprocess_config,
+                    render_mode,
+                    send_progress,
+                    source_indices=source_indices,
+                )
+            else:
+                tasks = run_batch_recognition(
+                    engine,
+                    paths,
+                    mode,
+                    preprocess_config,
+                    render_mode,
+                    send_progress,
+                    source_indices=source_indices,
+                    preprocess_configs=preprocess_configs,
+                )
+        elif preprocess_configs is None:
             tasks = run_batch_recognition(
                 engine,
-                [Path(path) for path in image_paths],
+                paths,
                 mode,
                 preprocess_config,
                 render_mode,
                 send_progress,
-                source_indices=source_indices,
-                preprocess_configs=preprocess_configs,
+                regions,
+                source_indices,
             )
         else:
             tasks = run_batch_recognition(
                 engine,
-                [Path(path) for path in image_paths],
+                paths,
                 mode,
                 preprocess_config,
                 render_mode,

@@ -708,14 +708,6 @@ class CutCornerButton(tk.Canvas):
             font=self._font,
             anchor=tk.CENTER,
         )
-        try:
-            has_focus = self == self.focus_get()
-        except (KeyError, tk.TclError):
-            has_focus = False
-        if has_focus and not self._is_disabled():
-            focus_path = self._shape_path(width - 5, height - 5)
-            focus_path = tuple(value + 2 for value in focus_path)
-            self.create_line(*focus_path, fill=border, width=1, dash=(2, 2))
 
     def _on_enter(self, event: tk.Event) -> None:
         if not self._is_disabled():
@@ -908,12 +900,6 @@ class PixelKeyButton(tk.Canvas):
             anchor=tk.CENTER,
             tag="key-letter",
         )
-        try:
-            has_focus = self == self.focus_get()
-        except (KeyError, tk.TclError):
-            has_focus = False
-        if has_focus and not self._is_disabled():
-            self.create_rectangle(4, 4, width - 8, height - 10, outline=INK, dash=(2, 2))
 
     def _on_enter(self, _event: tk.Event) -> None:
         if not self._is_disabled():
@@ -1076,7 +1062,7 @@ def configure_pixel_theme(root: tk.Misc, font_family: str) -> ttk.Style:
     root.configure(background=PAPER)
     root.option_add("*TCombobox*Listbox.background", PANEL)
     root.option_add("*TCombobox*Listbox.foreground", INK)
-    root.option_add("*TCombobox*Listbox.selectBackground", SOFT)
+    root.option_add("*TCombobox*Listbox.selectBackground", PANEL)
     root.option_add("*TCombobox*Listbox.selectForeground", INK)
     root.option_add("*TCombobox*Listbox.selectBorderWidth", 0)
     style.configure(".", font=(font_family, 10), background=PAPER, foreground=INK)
@@ -1207,7 +1193,7 @@ def configure_pixel_theme(root: tk.Misc, font_family: str) -> ttk.Style:
         fieldbackground=[("readonly", PANEL), ("focus", PANEL), ("!disabled", PANEL)],
         background=[("readonly", PANEL), ("focus", PANEL), ("!disabled", PANEL)],
         foreground=[("readonly", INK), ("focus", INK), ("!disabled", INK)],
-        selectbackground=[("readonly", SOFT), ("focus", SOFT), ("!disabled", SOFT)],
+        selectbackground=[("readonly", PANEL), ("focus", PANEL), ("!disabled", PANEL)],
         selectforeground=[("readonly", INK), ("focus", INK), ("!disabled", INK)],
     )
     style.configure(

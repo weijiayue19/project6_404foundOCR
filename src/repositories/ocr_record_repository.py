@@ -75,6 +75,12 @@ class OcrRecordRepository:
 
         return self.query_records(keyword=keyword, ascending=True)
 
+    def count_records(self) -> int:
+        """Return the total number of persisted OCR records."""
+
+        row = self.connection.execute("SELECT COUNT(*) AS total FROM ocr_records").fetchone()
+        return int(row["total"] if row is not None else 0)
+
     def query_records(
         self,
         *,

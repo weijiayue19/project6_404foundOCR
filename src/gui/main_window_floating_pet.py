@@ -5,9 +5,6 @@ from __future__ import annotations
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox
-
-from src.ocr_engine import OcrMode
 
 
 class MainWindowFloatingPetMixin:
@@ -62,6 +59,9 @@ class MainWindowFloatingPetMixin:
         """Hide the workbench and show the dinosaur pet without stopping OCR."""
 
         if self._is_quitting or self._is_restoring_from_pet:
+            return
+        assistant_enabled = getattr(self, "dino_assistant_enabled", None)
+        if assistant_enabled is not None and not assistant_enabled.get():
             return
         self._is_hiding_to_pet = True
         try:
@@ -139,60 +139,6 @@ class MainWindowFloatingPetMixin:
     def _remember_floating_pet_drop_paths(self, paths: list[Path]) -> None:
         self._floating_pet_drop_guard_until = time.monotonic() + self.FLOATING_PET_DROP_GUARD_SECONDS
         self._floating_pet_drop_signature = self._drop_paths_signature(paths)
-
-    def _show_drop_mode_prompt(self, paths: list[Path], *, keep_root_hidden: bool = False) -> None:
-        self._pending_pet_drop_paths = list(paths)
-        self._pending_pet_drop_keep_root_hidden = (
-            getattr(self, "_pending_pet_drop_keep_root_hidden", False) or keep_root_hidden
-        )
-        self.status_var.set("请选择识别模式，选择后导入文件")
-        if keep_root_hidden:
-            self._withdraw_root_for_pet_drop()
-        self._floating_pet.show_mode_prompt()
-
-    def _start_pending_drop_with_mode(self, mode: str) -> None:
-        selected_mode: OcrMode = "document" if mode == "document" else "text"
-        paths = list(self._pending_pet_drop_paths)
-        keep_root_hidden = self._pending_pet_drop_keep_root_hidden or self._should_keep_root_hidden_for_pet_drop()
-        self._pending_pet_drop_paths = []
-        self._pending_pet_drop_keep_root_hidden = False
-        if not paths:
-            self._floating_pet.reset_mode_choice()
-            return
-
-        def setup_mode_then_import() -> None:
-            try:
-                if keep_root_hidden:
-                    self._withdraw_root_for_pet_drop()
-                if self.recognition_mode is None:
-                    self._select_mode(selected_mode)
-                    if keep_root_hidden:
-                        self._withdraw_root_for_pet_drop()
-                else:
-                    self.recognition_mode = selected_mode
-                    self.mode_switch_var.set(self._recognition_mode_name(selected_mode))
-                self._floating_pet.clear_assistant_panel()
-            except Exception as exc:
-                self._floating_pet.reset_mode_choice()
-                messagebox.showerror("无法进入识别模式", str(exc))
-                self.status_var.set("识别模式初始化失败")
-                return
-
-            def accept_import() -> None:
-                self._import_dropped_images_then_start(paths, keep_root_hidden=keep_root_hidden)
-
-            try:
-                self.root.after(40, accept_import)
-            except (AttributeError, tk.TclError):
-                try:
-                    self.root.after_idle(accept_import)
-                except (AttributeError, tk.TclError):
-                    self._floating_pet.reset_mode_choice()
-
-        try:
-            self.root.after_idle(setup_mode_then_import)
-        except (AttributeError, tk.TclError):
-            self._floating_pet.reset_mode_choice()
 
     def _should_keep_root_hidden_for_pet_drop(self) -> bool:
         try:

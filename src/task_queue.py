@@ -2,12 +2,16 @@
 
 Tkinter 主线程不适合直接运行 PaddleOCR。该模块包含两类队列：
 
-1. ``TaskQueue``：GUI 使用的后台线程队列，负责把单次耗时 OCR 放到工作线程。
-2. ``OCRTaskQueue``：批量 OCR 调度队列，基于 FIFO 数据结构按图片加入顺序逐个识别。
+1. ``TaskQueue``：GUI 使用的通用后台线程队列，负责把单次耗时任务放到工作线程。
+2. ``OCRTaskQueue``：批量 OCR 的 FIFO 调度队列，保存批量任务状态并按图片加入顺序逐个执行。
 
 批量 OCR 适合使用任务队列，因为一次上传多张图片时，如果同时启动多个 OCR
 推理任务，很容易占满 CPU 和内存，导致桌面程序卡顿。FIFO 队列可以保证
 “先加入的图片先识别”，并把资源占用控制在一次只处理一张图。
+
+GUI 批量识别优先通过 ``src.services.recognition_runner`` / ``src.services.batch_process``
+组织真实 OCR 流程；``OCRTaskQueue.run_next(options)`` 和 ``run_all(options)`` 中延迟导入
+``src.pipeline.process_single_image`` 的路径保留给 CLI、demo 和既有测试兼容。
 """
 
 from __future__ import annotations
@@ -186,10 +190,9 @@ class OCRTaskQueue:
     并执行识别。这里显式使用 ``collections.deque`` 作为队列数据结构，
     从队尾入队、从队头出队，而不是简单用 for 循环遍历图片路径。
 
-    默认 OCR 函数是 ``fake_ocr``，用于单元测试和 demo。真实批量识别时，
-    调用 ``run_next(options)`` 或 ``run_all(options)`` 会延迟导入新的
-    ``process_single_image(image_path, options)``，逐张图片执行完整核心流程。
-    这样队列仍然体现 FIFO 数据结构，又不会在导入模块时提前加载 PaddleOCR。
+    默认 OCR 函数是 ``fake_ocr``，用于单元测试和 demo。真实 GUI 批量识别
+    由 ``src.services.recognition_runner`` 提供处理函数；传入 ``options`` 时
+    延迟导入 ``process_single_image`` 的完整流程只作为 CLI 和旧调用兼容路径。
     """
 
     WAITING = "waiting"
@@ -300,8 +303,9 @@ class OCRTaskQueue:
         - ``finished``：OCR 函数正常返回，结果保存到 ``result_text``。
         - ``failed``：OCR 函数抛出异常，错误信息保存到 ``error_message``。
 
-        传入 ``options`` 字典时，会调用新的 ``process_single_image`` 完整流程；
-        不传 options 时仍使用构造队列时给出的处理函数，默认是 ``fake_ocr``。
+        传入 ``options`` 字典时，会走 ``process_single_image`` 兼容流程；GUI 批量
+        识别通常通过 ``process_func`` 注入服务层处理函数。不传 options 时仍使用
+        构造队列时给出的处理函数，默认是 ``fake_ocr``。
         """
 
         if callable(options) and process_func is None:

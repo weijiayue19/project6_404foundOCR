@@ -34,6 +34,7 @@ def _pet_stub(master: _FakeMaster, *, visible: bool = True) -> FloatingDinoPet:
     pet._pixel = FloatingDinoPet.DEFAULT_PIXEL
     pet._background_color = FloatingDinoPet.OUTER_BACKGROUND
     pet._position = None
+    pet._base_position = None
     pet._last_window_size = None
     pet._ambient_motion_enabled = False
     pet._animation_after_id = None
@@ -41,10 +42,15 @@ def _pet_stub(master: _FakeMaster, *, visible: bool = True) -> FloatingDinoPet:
     pet._eating_ticks = 0
     pet._restore_blocked_until = 0.0
     pet._drop_dispatch_after_ids = set()
+    pet._completion_auto_hide_after_id = None
+    pet._position_state_path = None
     pet.drop_started_command = None
     pet._assistant_panel = "normal"
+    pet.window = None
+    pet.image_label = None
     pet._photo_cache = {}
     pet.is_visible = lambda: visible
+    pet._save_position = lambda: None
     pet._redraw = lambda: None
     return pet
 
@@ -268,22 +274,6 @@ def test_dragging_resident_pet_does_not_restore_main_window() -> None:
     assert restore_calls == []
 
 
-def test_mode_prompt_background_does_not_restore_main_window() -> None:
-    master = _FakeMaster()
-    pet = _pet_stub(master)
-    restore_calls = []
-    pet.restore_command = lambda: restore_calls.append(True)
-    pet._assistant_panel = "mode_prompt"
-    pet._press_pointer = (100, 100)
-    pet._press_window = (20, 30)
-    pet._dragged = False
-    pet._remember_position = lambda: None
-
-    pet._on_release(SimpleNamespace(x_root=101, y_root=100))
-
-    assert restore_calls == []
-
-
 def test_completion_background_does_not_restore_but_button_does() -> None:
     master = _FakeMaster()
     pet = _pet_stub(master)
@@ -302,6 +292,41 @@ def test_completion_background_does_not_restore_but_button_does() -> None:
     pet._restore_command_from_control()
 
     assert restore_calls == [True]
+
+
+def test_completion_message_auto_hides_after_ten_seconds() -> None:
+    master = _FakeMaster()
+    pet = _pet_stub(master)
+    layout_calls = []
+    pet.show = lambda: True
+    pet._layout_assistant_overlay = lambda: layout_calls.append(True)
+    pet.clear_assistant_panel = lambda: setattr(pet, "_assistant_panel", "normal")
+
+    assert pet.show_completion_message() is True
+
+    assert pet._assistant_panel == "complete"
+    assert layout_calls == []
+    assert master.after_calls[-1][0] == FloatingDinoPet.COMPLETION_AUTO_HIDE_MS
+
+    master.after_calls[-1][1]()
+
+    assert pet._assistant_panel == "normal"
+
+
+def test_dismissing_completion_panel_returns_to_resident_pet() -> None:
+    master = _FakeMaster()
+    pet = _pet_stub(master)
+    cleared = []
+    pet._assistant_panel = "complete"
+    pet._completion_auto_hide_after_id = "after-1"
+    pet.clear_assistant_panel = lambda: cleared.append(True) or setattr(pet, "_assistant_panel", "normal")
+
+    pet._dismiss_completion_panel()
+
+    assert pet._state == "idle"
+    assert cleared == [True]
+    assert master.cancelled == ["after-1"]
+    assert pet._completion_auto_hide_after_id is None
 
 
 class _GeometryWindow:
@@ -336,34 +361,90 @@ class _GeometryWindow:
         return self.height
 
 
-def test_panel_resize_keeps_bottom_right_anchor() -> None:
+def test_panel_clear_restores_pre_popup_position() -> None:
     master = _FakeMaster()
     pet = _pet_stub(master)
-    pet.window = _GeometryWindow(760, 610, 180, 150)
-    pet._position = (760, 610)
-    pet._last_window_size = (180, 150)
+    pet.window = _GeometryWindow(420, 425, 520, 305)
+    pet._assistant_panel = "complete"
+    pet._base_position = (760, 610)
+    pet._position = (420, 425)
+    pet._last_window_size = (520, 305)
+    pet._clear_overlay_widgets = lambda: None
+    pet._layout_assistant_overlay = lambda: None
 
-    pet._set_window_geometry(520, 335, keep_bottom_right=True)
+    pet.clear_assistant_panel()
 
-    assert pet.window.geometry_calls == ["520x335+420+425"]
-    assert pet._position == (420, 425)
-    assert pet._last_window_size == (520, 335)
+    assert pet.window.geometry_calls == ["158x150+760+610"]
+    assert pet._position == (760, 610)
+    assert pet._assistant_panel == "normal"
 
 
-def test_resident_click_restore_is_temporarily_blocked_after_drop_hover() -> None:
+def test_panel_clear_restores_saved_position_when_base_position_missing() -> None:
     master = _FakeMaster()
     pet = _pet_stub(master)
-    restore_calls = []
-    pet.restore_command = lambda: restore_calls.append(True)
-    pet._restore_blocked_until = time.monotonic() + 1
-    pet._press_pointer = (100, 100)
-    pet._press_window = (20, 30)
-    pet._dragged = False
-    pet._remember_position = lambda: None
+    pet.window = _GeometryWindow(420, 425, 520, 305)
+    pet._assistant_panel = "complete"
+    pet._base_position = None
+    pet._position = (420, 425)
+    pet._last_window_size = (520, 305)
+    pet._load_saved_position = lambda: (760, 610)
+    pet._clear_overlay_widgets = lambda: None
+    pet._layout_assistant_overlay = lambda: None
 
-    pet._on_release(SimpleNamespace(x_root=101, y_root=100))
+    pet.clear_assistant_panel()
 
-    assert restore_calls == []
+    assert pet.window.geometry_calls == ["158x150+760+610"]
+    assert pet._position == (760, 610)
+    assert pet._assistant_panel == "normal"
+
+
+def test_dismissing_completion_panel_does_not_reanchor_after_restore() -> None:
+    master = _FakeMaster()
+    pet = _pet_stub(master)
+    pet.window = _GeometryWindow(398, 455, 520, 305)
+    pet._assistant_panel = "complete"
+    pet._base_position = (760, 610)
+    pet._position = (398, 455)
+    pet._last_window_size = (520, 305)
+    pet._overlay_widgets = []
+    pet._overlay_drop_widgets = []
+    pet._drop_widgets = []
+    pet._sync_drag_drop_registration = lambda: None
+
+    pet._dismiss_completion_panel()
+
+    assert pet.window.geometry_calls == ["158x150+760+610"]
+    assert pet._position == (760, 610)
+    assert pet._last_window_size == (158, 150)
+    assert pet._assistant_panel == "normal"
+
+
+class _BindWidget:
+    def __init__(self) -> None:
+        self.bindings = []
+
+    def bind(self, sequence, callback, add=None):
+        self.bindings.append((sequence, callback, add))
+
+
+def test_pet_window_controls_do_not_bind_context_menu_events() -> None:
+    pet = _pet_stub(_FakeMaster())
+    widget = _BindWidget()
+
+    pet._bind_window_controls(widget)
+
+    sequences = [binding[0] for binding in widget.bindings]
+    assert "<ButtonPress-1>" in sequences
+    assert "<B1-Motion>" in sequences
+    assert "<ButtonRelease-1>" in sequences
+    assert "<MouseWheel>" in sequences
+    assert "<Button-4>" in sequences
+    assert "<Button-5>" in sequences
+    assert "<Button-2>" not in sequences
+    assert "<Button-3>" not in sequences
+    assert "<Control-Button-1>" not in sequences
+
+
 
 
 def test_eat_animation_opens_then_closes() -> None:
@@ -382,28 +463,6 @@ def test_eat_animation_opens_then_closes() -> None:
 
     assert pet._eating_ticks == 0
     assert pet._eat_animation_after_id is None
-
-
-def test_mode_choice_does_not_clear_overlay_from_button_callback() -> None:
-    master = _FakeMaster()
-    pet = _pet_stub(master)
-    pet._assistant_panel = "mode_prompt"
-    pet._mode_choice_pending = False
-    pet._mode_buttons = []
-    choices = []
-    clear_calls = []
-    pet.mode_choice_command = lambda mode: choices.append(mode)
-    pet.clear_assistant_panel = lambda: clear_calls.append(True)
-
-    pet._choose_mode("document")
-
-    assert choices == []
-    assert clear_calls == []
-
-    master.after_calls[0][1]()
-
-    assert choices == ["document"]
-    assert clear_calls == []
 
 
 class _DndMaster:

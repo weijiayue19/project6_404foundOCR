@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from src.gui.main_window import ImageEditState, MainWindow
+from src.gui.main_window import COPY, ImageEditState, MainWindow
 from src.gui.pixel_theme import INK, PAPER
 from src.region_selector import PreviewTransform
 from src.task_queue import OCRTask, OCRTaskQueue
@@ -911,7 +911,7 @@ def test_drop_event_defers_image_import_until_after_callback_returns():
     window.recognition_mode = "text"
     window.status_var = _StringVarStub()
     calls = []
-    window._accept_dropped_images = lambda paths: calls.append(paths)
+    window._accept_dropped_images = lambda paths, *, from_floating_pet=False: calls.append((paths, from_floating_pet))
 
     assert window._on_image_drop(SimpleNamespace(data="ignored")) == "copy"
     assert calls == []
@@ -919,39 +919,50 @@ def test_drop_event_defers_image_import_until_after_callback_returns():
 
     window.root.scheduled[0][1]()
 
-    assert calls == [[Path("/tmp/drop one.png")]]
+    assert calls == [([Path("/tmp/drop one.png")], False)]
 
 
-def test_drop_without_mode_shows_floating_pet_mode_prompt():
+def test_drop_without_mode_schedules_normal_import_without_pet_prompt():
     class _TkStub:
         def splitlist(self, _data):
             return ["/tmp/drop one.png"]
 
     class _RootStub:
-        tk = _TkStub()
-
-    class _PetStub:
         def __init__(self):
-            self.prompt_count = 0
+            self.tk = _TkStub()
+            self.scheduled = []
 
-        def show_mode_prompt(self):
-            self.prompt_count += 1
+        def state(self):
+            return "normal"
+
+        def after(self, delay, callback):
+            self.scheduled.append((delay, callback))
+            return "after-id"
+
+        def after_cancel(self, _after_id):
+            return None
 
     window = MainWindow.__new__(MainWindow)
     window.root = _RootStub()
-    window._floating_pet = _PetStub()
+    window._drop_after_id = None
     window._is_recognizing = False
     window.recognition_mode = None
     window.status_var = _StringVarStub()
+    imported = []
+    window._accept_dropped_images = lambda paths, *, from_floating_pet=False: imported.append((paths, from_floating_pet))
 
     assert window._on_image_drop(SimpleNamespace(data="ignored")) == "copy"
 
-    assert window._pending_pet_drop_paths == [Path("/tmp/drop one.png")]
-    assert window._floating_pet.prompt_count == 1
-    assert window.status_var.value == "请选择识别模式，选择后立即开始识别"
+    assert window.status_var.value == "正在导入 1 个文件……"
+    assert window.root.scheduled[0][0] == 80
+    assert imported == []
+
+    window.root.scheduled[0][1]()
+
+    assert imported == [([Path("/tmp/drop one.png")], False)]
 
 
-def test_floating_pet_drop_keeps_root_hidden_even_if_root_reports_normal():
+def test_floating_pet_drop_auto_imports_without_mode_prompt():
     class _TkStub:
         def splitlist(self, _data):
             return ["/tmp/drop one.png"]
@@ -971,28 +982,21 @@ def test_floating_pet_drop_keeps_root_hidden_even_if_root_reports_normal():
         def after_idle(self, callback):
             self.idle_callbacks.append(callback)
 
-    class _PetStub:
-        def __init__(self):
-            self.prompt_count = 0
-
-        def show_mode_prompt(self):
-            self.prompt_count += 1
-
     window = MainWindow.__new__(MainWindow)
     window.root = _RootStub()
-    window._floating_pet = _PetStub()
     window._is_recognizing = False
     window.recognition_mode = None
     window.status_var = _StringVarStub()
     window._is_hiding_to_pet = False
+    imported = []
+    window._accept_dropped_images = lambda paths, *, from_floating_pet=False: imported.append((paths, from_floating_pet))
 
     event = SimpleNamespace(data="ignored", _from_floating_pet=True)
 
     assert window._on_image_drop(event) == "copy"
 
-    assert window._pending_pet_drop_keep_root_hidden is True
-    assert window.root.withdraw_count == 2
-    assert window._floating_pet.prompt_count == 1
+    assert window.root.withdraw_count == 1
+    assert imported == [([Path("/tmp/drop one.png")], True)]
 
 
 def test_root_duplicate_drop_after_floating_pet_drop_is_ignored():
@@ -1034,125 +1038,7 @@ def test_root_duplicate_drop_after_floating_pet_drop_is_ignored():
     assert window.root.scheduled == []
 
 
-def test_mode_prompt_choice_imports_pending_drop_and_starts_recognition():
-    class _RootStub:
-        def __init__(self):
-            self.idle_callbacks = []
-            self.withdraw_count = 0
-
-        def after_idle(self, callback):
-            self.idle_callbacks.append(callback)
-
-        def state(self):
-            return "normal"
-
-        def withdraw(self):
-            self.withdraw_count += 1
-
-    class _PetStub:
-        def clear_assistant_panel(self):
-            return None
-
-        def set_state(self, _state):
-            return None
-
-    window = MainWindow.__new__(MainWindow)
-    window.root = _RootStub()
-    window._floating_pet = _PetStub()
-    window._pending_pet_drop_paths = [Path("first.png")]
-    window._pending_pet_drop_keep_root_hidden = False
-    window._pet_drop_recognition_active = False
-    window.recognition_mode = None
-    window._is_recognizing = False
-    window.image_path = Path("first.png")
-    selected_modes = []
-    accepted = []
-    started = []
-    window._select_mode = lambda mode: selected_modes.append(mode) or setattr(window, "recognition_mode", mode)
-    window._accept_images = lambda paths, *, append: accepted.append((paths, append))
-    window.start_recognition = lambda: started.append(True)
-
-    window._start_pending_drop_with_mode("document")
-    window.root.idle_callbacks[0]()
-    window.root.idle_callbacks[1]()
-
-    assert selected_modes == ["document"]
-    assert accepted == [([Path("first.png")], True)]
-    assert started == [True]
-    assert window._pet_drop_recognition_active is True
-    assert window.root.withdraw_count == 0
-
-
-def test_pet_mode_choice_keeps_hidden_root_withdrawn():
-    class _RootStub:
-        def __init__(self):
-            self.idle_callbacks = []
-            self.withdraw_count = 0
-
-        def after_idle(self, callback):
-            self.idle_callbacks.append(callback)
-
-        def state(self):
-            return "withdrawn"
-
-        def withdraw(self):
-            self.withdraw_count += 1
-
-    class _PetStub:
-        def clear_assistant_panel(self):
-            return None
-
-        def set_state(self, _state):
-            return None
-
-    window = MainWindow.__new__(MainWindow)
-    window.root = _RootStub()
-    window._floating_pet = _PetStub()
-    window._pending_pet_drop_paths = [Path("first.png")]
-    window._pending_pet_drop_keep_root_hidden = False
-    window._pet_drop_recognition_active = False
-    window.recognition_mode = None
-    window._is_recognizing = False
-    window.image_path = Path("first.png")
-    window._is_hiding_to_pet = False
-    window._select_mode = lambda mode: setattr(window, "recognition_mode", mode)
-    window._accept_images = lambda _paths, *, append: None
-    window.start_recognition = lambda: None
-
-    window._start_pending_drop_with_mode("text")
-
-    assert window.root.withdraw_count == 0
-    window.root.idle_callbacks[0]()
-    assert window.root.withdraw_count == 2
-    window.root.idle_callbacks[3]()
-    assert window.root.withdraw_count == 4
-
-
-def test_pet_mode_choice_resets_if_tk_scheduling_fails():
-    class _RootStub:
-        def state(self):
-            return "normal"
-
-    class _PetStub:
-        def __init__(self):
-            self.reset_count = 0
-
-        def reset_mode_choice(self):
-            self.reset_count += 1
-
-    window = MainWindow.__new__(MainWindow)
-    window.root = _RootStub()
-    window._floating_pet = _PetStub()
-    window._pending_pet_drop_paths = [Path("first.png")]
-    window._pending_pet_drop_keep_root_hidden = False
-    window.recognition_mode = None
-
-    window._start_pending_drop_with_mode("text")
-
-    assert window._floating_pet.reset_count == 1
-
-
-def test_accept_dropped_images_auto_starts_recognition_for_selected_mode():
+def test_accept_dropped_images_imports_without_auto_start_for_normal_window_drop():
     window = MainWindow.__new__(MainWindow)
     window._is_recognizing = False
     window.recognition_mode = "text"
@@ -1161,6 +1047,8 @@ def test_accept_dropped_images_auto_starts_recognition_for_selected_mode():
     window.image_path = Path("new.png")
     window.status_var = _StringVarStub()
     window._floating_pet = SimpleNamespace(clear_assistant_panel=lambda: None, set_state=lambda _state: None)
+    window._mode_for_dropped_paths = lambda paths: "text"
+    window._ensure_drop_recognition_mode = lambda mode, *, keep_root_hidden=False: setattr(window, "recognition_mode", mode)
     accepted = []
     started = []
     window._accept_images = lambda paths, *, append: accepted.append((paths, append)) or window.batch_image_infos.append((paths[0], 10, 10))
@@ -1169,8 +1057,71 @@ def test_accept_dropped_images_auto_starts_recognition_for_selected_mode():
     window._accept_dropped_images([Path("new.png")])
 
     assert accepted == [([Path("new.png")], True)]
+    assert started == []
+    assert getattr(window, "_pet_drop_recognition_active", False) is False
+
+
+def test_accept_dropped_images_auto_starts_recognition_for_floating_pet_drop():
+    window = MainWindow.__new__(MainWindow)
+    window._is_recognizing = False
+    window.recognition_mode = "text"
+    window._drop_keep_root_hidden = True
+    window.batch_image_infos = [(Path("existing.png"), 10, 10)]
+    window.image_path = Path("new.png")
+    window.status_var = _StringVarStub()
+    window._is_hiding_to_pet = False
+    window._floating_pet = SimpleNamespace(clear_assistant_panel=lambda: None, set_state=lambda _state: None)
+    window._mode_for_dropped_paths = lambda paths: "text"
+    window._ensure_drop_recognition_mode = lambda mode, *, keep_root_hidden=False: setattr(window, "recognition_mode", mode)
+    accepted = []
+    started = []
+    withdrawn = []
+    window.root = SimpleNamespace(after_idle=lambda callback: callback(), withdraw=lambda: withdrawn.append(True))
+    window._accept_images = lambda paths, *, append: accepted.append((paths, append)) or window.batch_image_infos.append((paths[0], 10, 10))
+    window.start_recognition = lambda: started.append(True)
+
+    window._accept_dropped_images([Path("new.png")], from_floating_pet=True)
+
+    assert accepted == [([Path("new.png")], True)]
     assert started == [True]
     assert window._pet_drop_recognition_active is True
+    assert withdrawn
+
+
+def test_pet_drop_queues_while_recognizing_and_starts_after_current_task():
+    window = MainWindow.__new__(MainWindow)
+    window._is_recognizing = True
+    window._pending_pet_drop_queue = []
+    window.status_var = _StringVarStub()
+    withdrawn = []
+    queued = []
+    window._should_keep_root_hidden_for_pet_drop = lambda: True
+    window._remember_floating_pet_drop_paths = lambda paths: None
+    window._enqueue_pending_pet_drop = lambda paths, *, keep_root_hidden: queued.append((paths, keep_root_hidden))
+
+    event = SimpleNamespace(data="queued.png", _from_floating_pet=True)
+    window._paths_from_drop_data = lambda data: [Path(data)]
+
+    result = window._on_image_drop(event)
+
+    assert result == COPY
+    assert queued == [([Path("queued.png")], True)]
+
+    imported = []
+    window.root = SimpleNamespace(after_idle=lambda callback: callback(), withdraw=lambda: withdrawn.append(True))
+    window._is_hiding_to_pet = False
+    window._pending_pet_drop_queue = [([Path("queued.png")], True)]
+    window._mode_for_dropped_paths = lambda paths: "text"
+    window._ensure_drop_recognition_mode = lambda mode, *, keep_root_hidden=False: None
+    window._import_dropped_images_then_start = lambda paths, *, keep_root_hidden, auto_start: imported.append(
+        (paths, keep_root_hidden, auto_start)
+    )
+
+    window._is_recognizing = False
+    window._complete_pet_drop_recognition(success=True)
+
+    assert window._pending_pet_drop_queue == []
+    assert imported == [([Path("queued.png")], True, True)]
 
 
 def test_large_dropped_image_import_is_chunked_before_starting_recognition():
@@ -1196,7 +1147,10 @@ def test_large_dropped_image_import_is_chunked_before_starting_recognition():
     window.image_path = None
     window.status_var = _StringVarStub()
     window._floating_pet = SimpleNamespace(clear_assistant_panel=lambda: None, set_state=lambda _state: None)
+    window._mode_for_dropped_paths = lambda paths: "text"
+    window._ensure_drop_recognition_mode = lambda mode, *, keep_root_hidden=False: setattr(window, "recognition_mode", mode)
     window._pet_drop_recognition_active = False
+    window._pending_pet_drop_queue = []
     chunks = []
     started = []
 
@@ -1212,7 +1166,7 @@ def test_large_dropped_image_import_is_chunked_before_starting_recognition():
     window.start_recognition = lambda: started.append(True)
 
     paths = [Path(f"image-{index}.png") for index in range(5)]
-    window._import_dropped_images_then_start(paths, keep_root_hidden=False)
+    window._import_dropped_images_then_start(paths, keep_root_hidden=False, auto_start=True)
 
     assert chunks == [([paths[0], paths[1]], True)]
     assert started == []

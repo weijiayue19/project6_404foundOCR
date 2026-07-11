@@ -7,6 +7,7 @@ import queue
 import tempfile
 import tkinter as tk
 import tkinter.font as tkfont
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import unquote, urlparse
@@ -63,6 +64,7 @@ from src.task_queue import OCRTask, OCRTaskQueue, TaskQueue, TaskStatus
 class MainWindow(MainWindowFloatingPetMixin):
     """负责选图、后台识别和结果展示。"""
 
+    SETTINGS_ICON_PATH = Path(__file__).resolve().parents[2] / "assets" / "settings-gear.png"
     IMAGE_TYPES = [("图片文件", "*.jpg *.jpeg *.png *.bmp")]
     DOCUMENT_TYPES = [("图片或 PDF 文档", "*.jpg *.jpeg *.png *.bmp *.pdf")]
     PREVIEW_SOURCE_MAX_SIZE = (1600, 1200)
@@ -102,6 +104,7 @@ class MainWindow(MainWindowFloatingPetMixin):
         self.preview_source: Image.Image | None = None
         self.preview_original_size: tuple[int, int] | None = None
         self.preview_photo: ImageTk.PhotoImage | None = None
+        self._settings_button_icon = self._load_settings_button_icon()
         self.preview_pdf_pages: list[Image.Image] = []
         self.preview_pdf_photos: list[ImageTk.PhotoImage | None] = []
         self.preview_pdf_render_specs: list[tuple[Image.Image, int, int, int, int]] = []
@@ -153,20 +156,20 @@ class MainWindow(MainWindowFloatingPetMixin):
             drop_started_command=self._mark_floating_pet_drop_started,
             dnd_files_type=DND_FILES,
             drop_accept_action=COPY,
-            mode_choice_command=self._start_pending_drop_with_mode,
         )
         self._is_quitting = False
         self._is_hiding_to_pet = False
         self._is_restoring_from_pet = False
         self._minimize_after_id: str | None = None
         self._mini_pixel_game_window: MiniPixelGameWindow | None = None
-        self._pending_pet_drop_paths: list[Path] = []
+        self._pending_pet_drop_queue: list[tuple[list[Path], bool]] = []
         self._pending_pet_drop_keep_root_hidden = False
         self._pet_drop_recognition_active = False
         self._drop_keep_root_hidden = False
         self._root_drop_enabled = False
         self._floating_pet_drop_guard_until = 0.0
         self._floating_pet_drop_signature: tuple[str, ...] | None = None
+        self.dino_assistant_enabled = tk.BooleanVar(value=True)
 
         self.path_var = tk.StringVar(value="尚未选择图片")
         self.preview_choice_var = tk.StringVar(value="")
@@ -186,6 +189,24 @@ class MainWindow(MainWindowFloatingPetMixin):
         if self._mini_pixel_game_window is None:
             self._mini_pixel_game_window = MiniPixelGameWindow(self.root)
         self._mini_pixel_game_window.show()
+
+    def _load_settings_button_icon(self) -> ImageTk.PhotoImage:
+        """载入主页设置入口使用的像素风齿轮图标。"""
+
+        with Image.open(self.SETTINGS_ICON_PATH) as icon:
+
+            return ImageTk.PhotoImage(icon.resize((34, 34), Image.Resampling.NEAREST))
+
+    def _draw_settings_button(self, canvas: tk.Canvas, *, hover: bool = False, pressed: bool = False) -> None:
+        canvas.delete("all")
+
+        fill = "#eceae3" if hover else PAPER
+        if pressed:
+            fill = "#deddd7"
+        canvas.create_rectangle(0, 0, 36, 36, fill=fill, outline="")
+        canvas.create_image(18, 18, image=self._settings_button_icon)
+        if canvas.focus_get() is canvas:
+            canvas.create_rectangle(1, 1, 35, 35, outline=INK, dash=(2, 2), width=1)
 
     def _build_start_screen(self) -> None:
         """Show the OCR mode choice screen before entering the workspace."""
@@ -218,6 +239,29 @@ class MainWindow(MainWindowFloatingPetMixin):
             style="Eyebrow.TLabel",
         )
         mode_note.place(relx=0.60, rely=0.095)
+
+        settings_button = tk.Canvas(
+            container,
+            width=36,
+            height=36,
+            background=PAPER,
+            highlightthickness=0,
+            borderwidth=0,
+            cursor="hand2",
+            takefocus=True,
+        )
+        settings_button.place(relx=0.965, rely=0.045, anchor="ne")
+        self._draw_settings_button(settings_button)
+        settings_button.bind("<Enter>", lambda _event: self._draw_settings_button(settings_button, hover=True))
+        settings_button.bind("<Leave>", lambda _event: self._draw_settings_button(settings_button))
+        settings_button.bind("<ButtonPress-1>", lambda _event: self._draw_settings_button(settings_button, pressed=True))
+        settings_button.bind(
+            "<ButtonRelease-1>",
+            lambda _event: (self._draw_settings_button(settings_button, hover=True), self.open_settings_window()),
+        )
+        settings_button.bind("<Return>", lambda _event: self.open_settings_window())
+        settings_button.bind("<space>", lambda _event: self.open_settings_window())
+        _Tooltip(settings_button, "设置")
 
         text_card = PixelBorderFrame(container, padding=18)
         text_card.place(relx=0.60, rely=0.16, relwidth=0.36, relheight=0.25)
@@ -1568,6 +1612,138 @@ class MainWindow(MainWindowFloatingPetMixin):
         self.status_var.set("已为您自动切换深度识别模式。")
         self._show_mode_toast(DEEP_MODE_LABEL, "已为您自动切换")
 
+    def open_settings_window(self) -> None:
+        """打开独立的应用设置窗口。"""
+
+        window = create_independent_window("设置", resizable=False)
+        frame = ttk.Frame(window, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        title_label = tk.Label(
+            frame,
+            text="设置",
+            background=PAPER,
+            foreground=INK,
+            font=(self.ui_font_family, 18, "bold"),
+            anchor=tk.W,
+        )
+        title_label.pack(anchor=tk.W)
+        description_label = tk.Label(
+            frame,
+            text="调整本地 OCR 的辅助功能。",
+            background=PAPER,
+            foreground=MUTED,
+            font=(self.ui_font_family, 10, "bold"),
+            anchor=tk.W,
+        )
+        description_label.pack(anchor=tk.W, pady=(4, 16))
+
+        canvas_width = 360
+        row_height = 52
+        checkbox_canvas = tk.Canvas(
+            frame,
+            width=canvas_width,
+            height=row_height,
+            background=PANEL,
+            highlightthickness=0,
+            borderwidth=0,
+            cursor="hand2",
+            takefocus=True,
+        )
+        checkbox_canvas.pack(fill=tk.X, pady=(0, 24))
+
+        def redraw_checkbox(*, active: bool = False) -> None:
+            checkbox_canvas.delete("all")
+            fill = "#fffdf7" if active else "#f7f6f1"
+            outline = INK if active else GRID
+            checkbox_canvas.create_rectangle(3, 4, canvas_width - 1, row_height, fill="#e6e4dd", outline="")
+            checkbox_canvas.create_rectangle(0, 0, canvas_width - 4, row_height - 4, fill=fill, outline=outline, width=2 if active else 1)
+            box_left = 20
+            box_top = row_height / 2 - 8
+            box_right = box_left + 16
+            box_bottom = box_top + 16
+            checkbox_canvas.create_rectangle(box_left, box_top, box_right, box_bottom, fill=PANEL, outline=INK, width=1)
+            if self.dino_assistant_enabled.get():
+                checkbox_canvas.create_line(
+                    box_left + 3,
+                    box_top + 8,
+                    box_left + 7,
+                    box_top + 12,
+                    box_right - 2,
+                    box_top + 3,
+                    fill=INK,
+                    width=3,
+                    smooth=False,
+                    joinstyle=tk.ROUND,
+                    capstyle=tk.ROUND,
+                )
+            checkbox_canvas.create_text(
+                box_left + 38,
+                row_height / 2,
+                text="启用小恐龙桌面助手",
+                fill=INK,
+                anchor=tk.W,
+                font=(self.ui_font_family, 12, "bold"),
+            )
+
+        def toggle_dino_assistant(_event: tk.Event | None = None) -> str:
+            self.dino_assistant_enabled.set(not self.dino_assistant_enabled.get())
+            if not self.dino_assistant_enabled.get():
+                self._floating_pet.hide()
+            redraw_checkbox(active=True)
+            return "break"
+
+        checkbox_canvas.bind("<Enter>", lambda _event: redraw_checkbox(active=True))
+        checkbox_canvas.bind("<Leave>", lambda _event: redraw_checkbox())
+        checkbox_canvas.bind("<ButtonPress-1>", toggle_dino_assistant)
+        checkbox_canvas.bind("<Return>", toggle_dino_assistant)
+        checkbox_canvas.bind("<space>", toggle_dino_assistant)
+        redraw_checkbox()
+
+        footer = ttk.Frame(frame, style="App.TFrame")
+        footer.pack(fill=tk.X)
+        footer.columnconfigure(0, weight=1)
+        help_button = tk.Canvas(
+            footer,
+            width=28,
+            height=28,
+            background=PAPER,
+            highlightthickness=0,
+            borderwidth=0,
+            cursor="hand2",
+            takefocus=True,
+        )
+        help_button.grid(row=0, column=1, sticky="e")
+
+        def draw_help_button(*, hover: bool = False, pressed: bool = False) -> None:
+            help_button.delete("all")
+            fill = "#eceae3" if hover else PANEL
+            if pressed:
+                fill = "#deddd7"
+            center = 14
+            help_button.create_oval(center - 11, center - 11, center + 11, center + 11, fill=fill, outline=INK, width=2)
+            help_button.create_text(center, center - 1, text="?", fill=INK, font=(self.ui_font_family, 13, "bold"))
+
+        help_button.bind("<Enter>", lambda _event: draw_help_button(hover=True))
+        help_button.bind("<Leave>", lambda _event: draw_help_button())
+        help_button.bind("<ButtonPress-1>", lambda _event: draw_help_button(pressed=True))
+        help_button.bind("<ButtonRelease-1>", lambda _event: (draw_help_button(hover=True), self._open_user_manual()))
+        help_button.bind("<Return>", lambda _event: self._open_user_manual())
+        help_button.bind("<space>", lambda _event: self._open_user_manual())
+        _Tooltip(help_button, "打开用户手册")
+        draw_help_button()
+
+        self._center_child_window(window)
+        window.deiconify()
+        window.lift()
+
+    def _open_user_manual(self) -> None:
+        manual_path = Path(__file__).resolve().parents[2] / "html" / "404_found_ocr_user_manual_v8.html"
+        if not manual_path.exists():
+            messagebox.showerror("无法打开用户手册", f"未找到用户手册：{manual_path}")
+            return
+        webbrowser.open_new_tab(manual_path.as_uri())
+
     def open_preprocess_settings(self) -> None:
         """打开轻量预处理设置窗口。"""
 
@@ -1965,15 +2141,18 @@ class MainWindow(MainWindowFloatingPetMixin):
         """接收从文件管理器拖入的一张或多张图片。"""
 
         try:
-            if self._is_recognizing:
-                self.status_var.set("正在识别，请完成后再追加图片")
-                return COPY
             paths = self._paths_from_drop_data(event.data)
             if not paths:
                 raise ValueError("没有检测到拖入的文件。")
-            if any(detect_upload_type(path) == "document" for path in paths):
-                self._switch_to_document_mode_for_upload()
             from_floating_pet = bool(getattr(event, "_from_floating_pet", False))
+            if self._is_recognizing and not from_floating_pet:
+                self.status_var.set("正在识别，请完成后再追加图片")
+                return COPY
+            if self._is_recognizing and from_floating_pet:
+                self._remember_floating_pet_drop_paths(paths)
+                keep_root_hidden = self._should_keep_root_hidden_for_pet_drop()
+                self._enqueue_pending_pet_drop(paths, keep_root_hidden=keep_root_hidden)
+                return COPY
             if from_floating_pet:
                 self._remember_floating_pet_drop_paths(paths)
             elif self._is_recent_floating_pet_root_drop(paths):
@@ -1982,40 +2161,124 @@ class MainWindow(MainWindowFloatingPetMixin):
             keep_root_hidden = from_floating_pet or self._should_keep_root_hidden_for_pet_drop()
             if keep_root_hidden:
                 self._withdraw_root_for_pet_drop()
-            if self.recognition_mode is None:
-                self._show_drop_mode_prompt(paths, keep_root_hidden=keep_root_hidden)
+            if self.recognition_mode is None and from_floating_pet:
+                self._accept_dropped_images(paths, from_floating_pet=True)
                 return COPY
-            self.status_var.set(f"正在导入 {len(paths)} 张图片……")
+            self.status_var.set(f"正在导入 {len(paths)} 个文件……")
             if self._drop_after_id is not None:
                 self.root.after_cancel(self._drop_after_id)
             self._drop_keep_root_hidden = getattr(self, "_drop_keep_root_hidden", False) or keep_root_hidden
             self._drop_after_id = self.root.after(
                 80,
-                lambda paths=paths: self._accept_dropped_images(paths),
+                lambda paths=paths, from_floating_pet=from_floating_pet: self._accept_dropped_images(
+                    paths,
+                    from_floating_pet=from_floating_pet,
+                ),
             )
         except Exception as exc:
             messagebox.showerror("无法导入图片", str(exc))
             self.status_var.set("拖拽图片加载失败")
         return COPY
 
-    def _accept_dropped_images(self, paths: list[Path]) -> None:
+    def _accept_dropped_images(self, paths: list[Path], *, from_floating_pet: bool = False) -> None:
         """Import after the drop callback returns so temporary files are ready."""
 
         self._drop_after_id = None
         try:
+            target_mode = self._mode_for_dropped_paths(paths)
             keep_root_hidden = getattr(self, "_drop_keep_root_hidden", False)
             if self._is_recognizing:
-                self.status_var.set("正在识别，请完成后再追加图片")
                 self._drop_keep_root_hidden = False
+                if from_floating_pet:
+                    self._enqueue_pending_pet_drop(paths, keep_root_hidden=keep_root_hidden)
+                else:
+                    self.status_var.set("正在识别，请完成后再追加图片")
                 return
             if keep_root_hidden:
                 self._withdraw_root_for_pet_drop()
-            self._import_dropped_images_then_start(paths, keep_root_hidden=keep_root_hidden)
+            self._ensure_drop_recognition_mode(target_mode, keep_root_hidden=keep_root_hidden)
+            self._import_dropped_images_then_start(
+                paths,
+                keep_root_hidden=keep_root_hidden,
+                auto_start=from_floating_pet,
+            )
         except Exception as exc:
             messagebox.showerror("无法导入图片", str(exc))
             self.status_var.set("拖拽图片加载失败")
 
-    def _import_dropped_images_then_start(self, paths: list[Path], *, keep_root_hidden: bool) -> None:
+    def _mode_for_dropped_paths(self, paths: list[Path]) -> OcrMode:
+        return "document" if any(detect_upload_type(path) == "document" for path in paths) else "text"
+
+    def _ensure_drop_recognition_mode(self, mode: OcrMode, *, keep_root_hidden: bool = False) -> None:
+        if self.recognition_mode is None:
+            self._select_mode(mode)
+            if keep_root_hidden:
+                self._withdraw_root_for_pet_drop()
+            return
+        if self._active_recognition_mode() == mode:
+            return
+        if mode == "document":
+            self._switch_to_document_mode_for_upload()
+            return
+        self._remember_current_batch_tasks_for_mode()
+        self._remember_current_single_result_for_mode()
+        self.recognition_mode = "text"
+        self._activate_mode_result_state("text")
+        self.mode_switch_var.set(FAST_MODE_LABEL)
+        self._sync_mode_switch_button()
+        self._sync_mode_labels()
+        self.root.title(f"本地 OCR - {FAST_MODE_LABEL}")
+        if hasattr(self, "result_text"):
+            display_text = self._render_current_result_text()
+            self._sync_result_actions(display_text)
+        self.status_var.set("已为图片自动切换快速识别模式。")
+        self._show_mode_toast(FAST_MODE_LABEL, "已为图片自动切换")
+
+    def _enqueue_pending_pet_drop(self, paths: list[Path], *, keep_root_hidden: bool) -> None:
+        if not paths:
+            return
+        self._pending_pet_drop_queue.append((list(paths), keep_root_hidden))
+        pending_count = len(self._pending_pet_drop_queue)
+        file_count = sum(len(queued_paths) for queued_paths, _hidden in self._pending_pet_drop_queue)
+        self.status_var.set(f"正在识别，已将 {file_count} 个宠物拖拽文件加入待处理队列（{pending_count} 批）")
+        if keep_root_hidden:
+            self._withdraw_root_for_pet_drop()
+
+    def _start_next_pending_pet_drop(self) -> bool:
+        if self._is_recognizing or not self._pending_pet_drop_queue:
+            return False
+        paths, keep_root_hidden = self._pending_pet_drop_queue.pop(0)
+        if keep_root_hidden:
+            self._withdraw_root_for_pet_drop()
+        self.status_var.set(f"正在导入待处理的 {len(paths)} 个宠物拖拽文件……")
+        try:
+            self._ensure_drop_recognition_mode(self._mode_for_dropped_paths(paths), keep_root_hidden=keep_root_hidden)
+            self._import_dropped_images_then_start(
+                paths,
+                keep_root_hidden=keep_root_hidden,
+                auto_start=True,
+            )
+        except Exception as exc:
+            messagebox.showerror("无法导入图片", str(exc))
+            self.status_var.set("待处理宠物拖拽文件加载失败")
+            self._complete_pet_drop_recognition(success=False)
+        return True
+
+    def _complete_pet_drop_recognition(self, *, success: bool) -> None:
+        if self._start_next_pending_pet_drop():
+            return
+        if success:
+            self._show_pet_drop_completion()
+        else:
+            self._clear_pet_drop_recognition()
+
+    def _import_dropped_images_then_start(
+        self,
+        paths: list[Path],
+        *,
+        keep_root_hidden: bool,
+        auto_start: bool = False,
+    ) -> None:
         if not paths:
             raise ValueError("没有检测到图片。")
         if getattr(self, "_drop_import_after_id", None) is not None:
@@ -2044,13 +2307,21 @@ class MainWindow(MainWindowFloatingPetMixin):
                 f"已将 {added_count} 个{upload_name}追加到队尾；当前共 {len(batch_image_infos)} 个文件"
             )
             self._drop_keep_root_hidden = False
-            if keep_root_hidden:
-                self.restore_from_pet()
+            if auto_start:
+                if added_count <= 0:
+                    self._pet_drop_recognition_active = True
+                    self._complete_pet_drop_recognition(success=True)
+                    return
+                self._pet_drop_recognition_active = True
+                self.start_recognition()
+                if keep_root_hidden:
+                    self._withdraw_root_for_pet_drop()
+            elif keep_root_hidden:
+                self._withdraw_root_for_pet_drop()
 
         def fail_import(exc: Exception) -> None:
             self._drop_import_after_id = None
             self._drop_keep_root_hidden = False
-            self._floating_pet.reset_mode_choice()
             messagebox.showerror("无法导入图片", str(exc))
             set_status("拖拽图片加载失败")
 
@@ -2058,9 +2329,11 @@ class MainWindow(MainWindowFloatingPetMixin):
             nonlocal imported
             self._drop_import_after_id = None
             if self._is_recognizing:
-                set_status("正在识别，请完成后再追加图片")
-                self._drop_keep_root_hidden = False
-                self._floating_pet.reset_mode_choice()
+                if auto_start:
+                    self._enqueue_pending_pet_drop(paths[imported:], keep_root_hidden=keep_root_hidden)
+                else:
+                    set_status("正在识别，请完成后再追加图片")
+                    self._drop_keep_root_hidden = False
                 return
             if keep_root_hidden:
                 self._withdraw_root_for_pet_drop()
@@ -2812,7 +3085,7 @@ class MainWindow(MainWindowFloatingPetMixin):
                 self.status_var.set(
                     f"没有新增或待识别图片；当前{self._recognition_mode_name(self.recognition_mode)}结果已保留"
                 )
-                self._clear_pet_drop_recognition()
+                self._complete_pet_drop_recognition(success=True)
                 return
 
         run_total = (
@@ -2903,7 +3176,7 @@ class MainWindow(MainWindowFloatingPetMixin):
                 self._batch_process = None
                 self._finish_batch_process()
                 self._set_dino_state("error")
-                self._clear_pet_drop_recognition()
+                self._complete_pet_drop_recognition(success=False)
                 self.saved_status_var.set("最近保存：失败")
                 messagebox.showerror("批量识别失败", f"无法启动 OCR 独立进程：{exc}")
                 return
@@ -2952,7 +3225,7 @@ class MainWindow(MainWindowFloatingPetMixin):
                 self._update_dino_progress(len(execution), max(1, len(execution)))
                 self._set_dino_state("done")
                 self._handle_batch_result(execution)
-                self._show_pet_drop_completion()
+                self._complete_pet_drop_recognition(success=True)
                 return
             self._update_dino_progress(1, 1)
             self._set_dino_state("done")
@@ -2986,10 +3259,10 @@ class MainWindow(MainWindowFloatingPetMixin):
             self.status_var.set(
                 f"识别完成：{len(result.blocks)} 个文本块，预处理 {execution.preprocess_seconds:.2f} 秒，OCR {result.elapsed_seconds:.2f} 秒"
             )
-            self._show_pet_drop_completion()
+            self._complete_pet_drop_recognition(success=True)
         else:
             self._set_dino_state("error")
-            self._clear_pet_drop_recognition()
+            self._complete_pet_drop_recognition(success=False)
             self.current_result = None
             if target_index is not None:
                 self._store_selected_region_error(target_index, str(task_result.error))
@@ -3029,10 +3302,10 @@ class MainWindow(MainWindowFloatingPetMixin):
             self._finish_batch_process()
             if kind == "complete":
                 self._handle_batch_result(list(self.current_batch_tasks))
-                self._show_pet_drop_completion()
+                self._complete_pet_drop_recognition(success=True)
             else:
                 self._set_dino_state("error")
-                self._clear_pet_drop_recognition()
+                self._complete_pet_drop_recognition(success=False)
                 display_text = self._render_current_result_text()
                 self._sync_result_actions(display_text)
                 self.status_var.set(
@@ -3049,7 +3322,7 @@ class MainWindow(MainWindowFloatingPetMixin):
                 exit_code = process.exitcode
                 self._finish_batch_process()
                 self._set_dino_state("error")
-                self._clear_pet_drop_recognition()
+                self._complete_pet_drop_recognition(success=False)
                 self.status_var.set("批量识别进程异常退出")
                 self.saved_status_var.set("最近保存：失败")
                 messagebox.showerror("批量识别失败", f"OCR 进程异常退出（代码 {exit_code}）。")
@@ -3367,7 +3640,7 @@ class MainWindow(MainWindowFloatingPetMixin):
         self.current_task_id = None
         self._is_recognizing = False
         self.recognition_mode = None
-        self._pending_pet_drop_paths = []
+        self._pending_pet_drop_queue = []
         self._pet_drop_recognition_active = False
         self._floating_pet.clear_assistant_panel()
         self.image_path = None

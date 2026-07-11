@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import json
+from pathlib import Path
 import random
 import time
 import tkinter as tk
@@ -44,7 +46,9 @@ class FloatingDinoPet:
     EAT_ANIMATION_MS = 85
     EAT_ANIMATION_FRAMES = 6
     DROP_DISPATCH_DELAY_MS = 30
+    COMPLETION_AUTO_HIDE_MS = 10_000
     TRANSPARENT_COLOR_KEY = "#010203"
+    POSITION_STATE_PATH = Path("data/gui_state/floating_pet_position.json")
     _DND_METHODS = (
         "_substitute_dnd",
         "_dnd_bind",
@@ -68,7 +72,7 @@ class FloatingDinoPet:
         drop_started_command: Callable[[object], None] | None = None,
         dnd_files_type: str | None = None,
         drop_accept_action: str = "copy",
-        mode_choice_command: Callable[[str], None] | None = None,
+        position_state_path: str | Path | None = None,
     ) -> None:
         self.master = master
         self.restore_command = restore_command
@@ -76,7 +80,6 @@ class FloatingDinoPet:
         self.drop_started_command = drop_started_command
         self._dnd_files_type = dnd_files_type
         self._drop_accept_action = drop_accept_action
-        self.mode_choice_command = mode_choice_command
         self.window: tk.Toplevel | None = None
         self.image_label: tk.Label | None = None
         self._photo: ImageTk.PhotoImage | None = None
@@ -84,7 +87,9 @@ class FloatingDinoPet:
         self._pixel = self.DEFAULT_PIXEL
         self._background_color = self.OUTER_BACKGROUND
         self._transparency = self._solid_transparency_strategy()
-        self._position: tuple[int, int] | None = None
+        self._position_state_path = Path(position_state_path) if position_state_path is not None else self.POSITION_STATE_PATH
+        self._position: tuple[int, int] | None = self._load_saved_position()
+        self._base_position: tuple[int, int] | None = self._position
         self._last_window_size: tuple[int, int] | None = None
         self._press_pointer: tuple[int, int] | None = None
         self._press_window: tuple[int, int] | None = None
@@ -101,11 +106,10 @@ class FloatingDinoPet:
         self._drop_enabled = False
         self._drop_widgets: list[tk.Widget] = []
         self._drop_dispatch_after_ids: set[str] = set()
+        self._completion_auto_hide_after_id: str | None = None
         self._assistant_panel = "normal"
         self._overlay_widgets: list[tk.Widget] = []
         self._overlay_drop_widgets: list[tk.Widget] = []
-        self._mode_buttons: list[tk.Widget] = []
-        self._mode_choice_pending = False
 
     def is_visible(self) -> bool:
         window = self.window
@@ -141,22 +145,16 @@ class FloatingDinoPet:
                 self._advance_eat_animation,
             )
 
-    def show_mode_prompt(self) -> bool:
-        self._assistant_panel = "mode_prompt"
-        self._mode_choice_pending = False
-        self._photo_cache.clear()
-        visible = self.show()
-        self._layout_assistant_overlay()
-        return visible
-
     def show_completion_message(self) -> bool:
+        self._snapshot_base_position()
         self._assistant_panel = "complete"
         self._photo_cache.clear()
         visible = self.show()
-        self._layout_assistant_overlay()
+        self._schedule_completion_auto_hide()
         return visible
 
     def clear_assistant_panel(self) -> None:
+        self._cancel_completion_auto_hide()
         if self._assistant_panel == "normal":
             return
         self._assistant_panel = "normal"
@@ -165,9 +163,9 @@ class FloatingDinoPet:
         window = self.window
         if window is not None:
             width, height = self._window_size()
-            self._set_window_geometry(width, height, keep_bottom_right=True)
+            x, y = self._remembered_resident_position()
+            self._set_window_geometry(width, height, x=x, y=y)
         self._redraw()
-        self._layout_assistant_overlay()
 
     def show(self) -> bool:
         if self.window is None or not self._window_exists():
@@ -215,6 +213,7 @@ class FloatingDinoPet:
         try:
             if self.window.winfo_exists():
                 self._remember_position()
+                self._save_position()
                 self._cancel_animation()
                 self.window.withdraw()
         except tk.TclError:
@@ -224,6 +223,7 @@ class FloatingDinoPet:
         self._ambient_motion_enabled = False
         self._cancel_animation()
         self._cancel_eat_animation()
+        self._cancel_completion_auto_hide()
         self._cancel_pending_drop_dispatches()
         self._unregister_drag_drop()
         if self.window is None:
@@ -274,7 +274,7 @@ class FloatingDinoPet:
         self.window = window
         self.image_label = label
         self._configure_transparency()
-        self._bind_overlay_window_controls(label)
+        self._bind_window_controls(label)
         self._redraw()
 
     def _solid_transparency_strategy(self) -> _TransparencyStrategy:
@@ -456,8 +456,6 @@ class FloatingDinoPet:
                 pass
         self._overlay_widgets = []
         self._overlay_drop_widgets = []
-        self._mode_buttons = []
-        self._mode_choice_pending = False
 
     def _layout_assistant_overlay(self) -> None:
         window = self.window
@@ -466,37 +464,56 @@ class FloatingDinoPet:
             return
 
         self._clear_overlay_widgets()
+        if self._assistant_panel == "normal":
+            self._sync_drag_drop_registration()
+            return
         try:
             width, height = self._window_size()
             self._set_window_geometry(width, height, keep_bottom_right=True)
         except tk.TclError:
             return
 
-        if self._assistant_panel == "mode_prompt":
-            self._build_mode_prompt_overlay(window)
-        elif self._assistant_panel == "complete":
+        if self._assistant_panel == "complete":
             self._build_completion_overlay(window)
         self._sync_drag_drop_registration()
 
-    def _build_mode_prompt_overlay(self, window: tk.Toplevel) -> None:
-        bubble = self._speech_bubble(
-            window,
-            "请选择一种识别模式\n选择后导入文件",
-            width=292,
-            height=104,
-            font_size=14,
-            anchor=tk.W,
-        )
-        bubble.place(x=202, y=70, width=292, height=104)
-        document_button = self._mode_button(window, "文档识别", "document")
-        text_button = self._mode_button(window, "截图识别", "text")
-        document_button.place(x=60, y=230, width=170, height=54)
-        text_button.place(x=260, y=230, width=170, height=54)
-        self._overlay_widgets.extend([bubble, document_button, text_button])
-        self._overlay_drop_widgets.append(bubble)
-        self._mode_buttons = [document_button, text_button]
+    def _load_saved_position(self) -> tuple[int, int] | None:
+        try:
+            data = json.loads(self._position_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return None
+        try:
+            x = int(data["x"])
+            y = int(data["y"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return max(0, x), max(0, y)
+
+    def _save_position(self) -> None:
+        position = getattr(self, "_base_position", None) or getattr(self, "_position", None)
+        if position is None:
+            return
+        try:
+            self._position_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._position_state_path.write_text(
+                json.dumps({"x": int(position[0]), "y": int(position[1])}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            print(f"[WARNING] 小恐龙位置保存失败: {exc}")
+
+    def _remembered_resident_position(self) -> tuple[int, int]:
+        return self._base_position or self._load_saved_position() or self._position or self._default_position()
+
+    def _snapshot_base_position(self) -> None:
+        if self._assistant_panel != "normal":
+            return
+        self._remember_position()
+        self._base_position = self._position
 
     def _build_completion_overlay(self, window: tk.Toplevel) -> None:
+        close_button = self._completion_close_button(window)
+        close_button.place(x=26, y=24, width=26, height=26)
         bubble = self._speech_bubble(
             window,
             "识别完成，请查看",
@@ -518,7 +535,7 @@ class FloatingDinoPet:
             padx=46,
         )
         done.place(x=58, y=206, width=388, height=44)
-        self._bind_overlay_window_controls(done)
+        self._bind_window_controls(done)
         button = CutCornerButton(
             window,
             text="返回主页面查看",
@@ -530,8 +547,63 @@ class FloatingDinoPet:
             min_height=44,
         )
         button.place(x=158, y=258, width=210, height=44)
-        self._overlay_widgets.extend([bubble, done, button])
+        self._overlay_widgets.extend([close_button, bubble, done, button])
         self._overlay_drop_widgets.extend([bubble, done])
+
+    def _completion_close_button(self, window: tk.Toplevel) -> tk.Canvas:
+        canvas = tk.Canvas(
+            window,
+            width=26,
+            height=26,
+            background=self._background_color,
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+
+        def redraw(event: tk.Event | None = None) -> None:
+            width = max(1, int(getattr(event, "width", 26)))
+            height = max(1, int(getattr(event, "height", 26)))
+            canvas.delete("all")
+            pad = 7
+            canvas.create_line(pad, pad, width - pad, height - pad, fill=INK, width=1)
+            canvas.create_line(width - pad, pad, pad, height - pad, fill=INK, width=1)
+
+        def close(_event: tk.Event | None = None) -> str:
+            self._dismiss_completion_panel()
+            return "break"
+
+        canvas.bind("<Configure>", redraw, add="+")
+        canvas.bind("<ButtonRelease-1>", close, add="+")
+        redraw()
+        return canvas
+
+    def _schedule_completion_auto_hide(self) -> None:
+        self._cancel_completion_auto_hide()
+        try:
+            self._completion_auto_hide_after_id = self.master.after(
+                self.COMPLETION_AUTO_HIDE_MS,
+                self._dismiss_completion_panel,
+            )
+        except (AttributeError, tk.TclError):
+            self._completion_auto_hide_after_id = None
+
+    def _cancel_completion_auto_hide(self) -> None:
+        after_id = getattr(self, "_completion_auto_hide_after_id", None)
+        if after_id is None:
+            return
+        try:
+            self.master.after_cancel(after_id)
+        except (AttributeError, tk.TclError):
+            pass
+        self._completion_auto_hide_after_id = None
+
+    def _dismiss_completion_panel(self) -> None:
+        self._cancel_completion_auto_hide()
+        if self._assistant_panel != "complete":
+            return
+        self.set_state("idle")
+        self.clear_assistant_panel()
 
     def _restore_command_from_control(self) -> None:
         self.restore_command()
@@ -598,60 +670,25 @@ class FloatingDinoPet:
 
         canvas.bind("<Configure>", redraw, add="+")
         redraw()
-        self._bind_overlay_window_controls(canvas)
+        self._bind_window_controls(canvas)
         return canvas
 
-    def _mode_button(self, window: tk.Toplevel, text: str, mode: str) -> tk.Widget:
-        return CutCornerButton(
-            window,
-            text=text,
-            command=lambda value=mode: self._choose_mode(value),
-            variant="default",
-            font_family="TkDefaultFont",
-            outer_background=self._background_color,
-            min_width=170,
-            min_height=54,
-        )
+    def _bind_window_controls(self, widget: tk.Widget) -> None:
+        self._bind_drag_controls(widget)
+        self._bind_resize_controls(widget)
 
     def _bind_overlay_window_controls(self, widget: tk.Widget) -> None:
+        self._bind_window_controls(widget)
+
+    def _bind_drag_controls(self, widget: tk.Widget) -> None:
         widget.bind("<ButtonPress-1>", self._on_press, add="+")
         widget.bind("<B1-Motion>", self._on_drag, add="+")
         widget.bind("<ButtonRelease-1>", self._on_release, add="+")
+
+    def _bind_resize_controls(self, widget: tk.Widget) -> None:
         widget.bind("<MouseWheel>", self._on_mouse_wheel, add="+")
         widget.bind("<Button-4>", lambda event: self._resize_by(1), add="+")
         widget.bind("<Button-5>", lambda event: self._resize_by(-1), add="+")
-
-    def _choose_mode(self, mode: str) -> None:
-        if self._mode_choice_pending:
-            return
-        self._mode_choice_pending = True
-        for button in getattr(self, "_mode_buttons", []):
-            try:
-                button.configure(state=tk.DISABLED)
-            except tk.TclError:
-                pass
-        self._block_restore_briefly()
-        try:
-            self.master.after_idle(lambda value=mode: self._finish_mode_choice(value))
-        except (AttributeError, tk.TclError):
-            self._finish_mode_choice(mode)
-
-    def _finish_mode_choice(self, mode: str) -> None:
-        if self.mode_choice_command is not None:
-            self.mode_choice_command(mode)
-        else:
-            self.reset_mode_choice()
-
-    def reset_mode_choice(self) -> None:
-        self._mode_choice_pending = False
-        if self._assistant_panel != "mode_prompt":
-            return
-        for button in getattr(self, "_mode_buttons", []):
-            try:
-                if button.winfo_exists():
-                    button.configure(state=tk.NORMAL)
-            except tk.TclError:
-                pass
 
     def _window_exists(self) -> bool:
         try:
@@ -726,8 +763,6 @@ class FloatingDinoPet:
         return self._window_size()
 
     def _window_size(self) -> tuple[int, int]:
-        if self._assistant_panel == "mode_prompt":
-            return (520, 335)
         if self._assistant_panel == "complete":
             return (520, 305)
         padding = self._padding()
@@ -762,6 +797,9 @@ class FloatingDinoPet:
             return
         try:
             self._position = (window.winfo_x(), window.winfo_y())
+            if self._assistant_panel == "normal":
+                self._base_position = self._position
+                self._save_position()
             width = max(1, window.winfo_width())
             height = max(1, window.winfo_height())
             if width > 1 and height > 1:
@@ -1203,6 +1241,8 @@ class FloatingDinoPet:
         x = self._press_window[0] + delta_x
         y = self._press_window[1] + delta_y
         self._position = (x, y)
+        if self._assistant_panel == "normal":
+            self._base_position = self._position
         try:
             window.geometry(f"+{x}+{y}")
         except tk.TclError:
@@ -1253,6 +1293,8 @@ class FloatingDinoPet:
         new_x = max(0, old_x + (old_width - new_width) // 2)
         new_y = max(0, old_y + (old_height - new_height) // 2)
         self._position = (new_x, new_y)
+        self._base_position = self._position
+        self._save_position()
         if window is not None:
             try:
                 window.geometry(f"{new_width}x{new_height}+{new_x}+{new_y}")

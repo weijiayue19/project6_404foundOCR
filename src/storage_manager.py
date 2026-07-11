@@ -98,6 +98,11 @@ class OCRStorageManager:
 
         return self.repository.list_all()
 
+    def count_records(self) -> int:
+        """返回 SQLite 中的 OCR 历史记录总数。"""
+
+        return self.repository.count_records()
+
     def get_record(self, record_id: str) -> dict[str, Any] | None:
         """按记录 ID 读取单条 OCR 记录。"""
 
