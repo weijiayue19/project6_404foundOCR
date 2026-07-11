@@ -4,8 +4,9 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from src.gui.main_window import COPY, ImageEditState, MainWindow
+from src.gui.main_window import COPY, DroppedTaskPlan, ImageEditState, MainWindow
 from src.gui.pixel_theme import INK, PAPER
+from src.models.ocr_result import OcrResult, TextBlock
 from src.region_selector import PreviewTransform
 from src.task_queue import OCRTask, OCRTaskQueue
 
@@ -292,6 +293,37 @@ def test_appending_images_keeps_existing_queue_and_regions(tmp_path):
     ]
     assert window.preview_image_index == 0
     assert window.image_path == first
+
+
+def test_appending_after_single_recognition_promotes_result_for_batch_reuse():
+    window = MainWindow.__new__(MainWindow)
+    first = Path("first.png")
+    result = OcrResult(
+        image_path=first,
+        elapsed_seconds=0.1,
+        blocks=[TextBlock("first result", 0.9, [[0, 0], [10, 0], [10, 10], [0, 10]])],
+    )
+    window.batch_image_infos = [(first, 10, 10)]
+    window.current_batch_tasks = []
+    window.current_result = result
+    window.current_record_id = "record-first"
+    window.current_recognition_region = None
+    window.recognition_mode = "text"
+    window._batch_tasks_by_mode = {"text": [], "document": []}
+    window._single_result_by_mode = {
+        "text": {"result": result, "record_id": "record-first", "region": None}
+    }
+
+    window._promote_single_result_before_batch_append()
+
+    assert len(window.current_batch_tasks) == 1
+    task = window.current_batch_tasks[0]
+    assert task.image_path == str(first)
+    assert task.status == OCRTaskQueue.FINISHED
+    assert task.result_text == "first result"
+    assert task.extra["record_id"] == "record-first"
+    assert task.extra["gui_recorded"] is True
+    assert window._batch_indices_to_recognize(False) == []
 
 
 def test_rotating_current_image_preserves_transformed_region_and_clears_stale_results():
@@ -1088,6 +1120,37 @@ def test_accept_dropped_images_auto_starts_recognition_for_floating_pet_drop():
     assert withdrawn
 
 
+def test_new_pet_drop_clears_previous_completion_panel_before_dispatch():
+    window = MainWindow.__new__(MainWindow)
+    window._is_recognizing = False
+    window.recognition_mode = None
+    window.status_var = _StringVarStub()
+    window._is_hiding_to_pet = False
+    cleared = []
+    window._floating_pet = SimpleNamespace(clear_assistant_panel=lambda: cleared.append(True))
+    window._pet_drop_owner = window
+    window._pending_pet_drop_queue = []
+    window._mode_windows = {}
+    window._pet_drop_session_modes = set()
+    window._serial_active_window = None
+    window._pet_drop_recognition_active = False
+    window._paths_from_drop_data = lambda _data: [Path("new-round.png")]
+    window._remember_floating_pet_drop_paths = lambda _paths: None
+    window._should_keep_root_hidden_for_pet_drop = lambda: True
+    window._withdraw_root_for_pet_drop = lambda: None
+    accepted = []
+    window._accept_dropped_images = lambda paths, *, from_floating_pet=False: accepted.append(
+        (paths, from_floating_pet)
+    )
+
+    result = window._on_image_drop(SimpleNamespace(data="new-round.png", _from_floating_pet=True))
+
+    assert result == COPY
+    assert cleared == [True]
+    assert accepted == [([Path("new-round.png")], True)]
+    assert window._pet_drop_recognition_active is True
+
+
 def test_pet_drop_queues_while_recognizing_and_starts_after_current_task():
     window = MainWindow.__new__(MainWindow)
     window._is_recognizing = True
@@ -1124,7 +1187,98 @@ def test_pet_drop_queues_while_recognizing_and_starts_after_current_task():
     assert imported == [([Path("queued.png")], True, True)]
 
 
-def test_large_dropped_image_import_is_chunked_before_starting_recognition():
+def test_pet_drop_split_paths_preserves_order_and_coalesces_modes():
+    window = MainWindow.__new__(MainWindow)
+    window._mode_for_drop_path = lambda path: "document" if path.suffix == ".pdf" else "text"
+
+    paths = [Path("a.png"), Path("b.jpg"), Path("c.pdf"), Path("d.pdf"), Path("e.png")]
+    plans = window._split_drop_paths_by_mode(paths, keep_root_hidden=True, from_floating_pet=True)
+
+    assert [(plan.mode, plan.paths, plan.keep_root_hidden) for plan in plans] == [
+        ("text", [Path("a.png"), Path("b.jpg")], True),
+        ("document", [Path("c.pdf"), Path("d.pdf")], True),
+        ("text", [Path("e.png")], True),
+    ]
+
+
+def test_pet_drop_routes_mixed_tasks_serially_without_switching_visible_mode():
+    owner = MainWindow.__new__(MainWindow)
+    owner.recognition_mode = "text"
+    owner._pet_drop_owner = owner
+    owner._mode_windows = {"text": owner}
+    owner._pending_pet_drop_queue = []
+    owner._pet_drop_session_modes = set()
+    owner._serial_active_window = None
+    owner._pet_drop_recognition_active = False
+    owner.status_var = _StringVarStub()
+    owner._is_recognizing = False
+    owner._withdraw_root_for_pet_drop = lambda: None
+
+    text_started = []
+    document_started = []
+    text_window = owner
+    document_window = SimpleNamespace(
+        _is_recognizing=False,
+        status_var=_StringVarStub(),
+        _withdraw_root_for_pet_drop=lambda: None,
+        _ensure_drop_recognition_mode=lambda mode, *, keep_root_hidden=False: document_started.append(("ensure", mode)),
+        _import_dropped_images_then_start=lambda paths, *, keep_root_hidden, auto_start: document_started.append(
+            (paths, keep_root_hidden, auto_start)
+        ),
+    )
+    owner._active_recognition_mode = lambda: "text"
+    owner._ensure_drop_recognition_mode = lambda mode, *, keep_root_hidden=False: text_started.append(("ensure", mode))
+    owner._import_dropped_images_then_start = lambda paths, *, keep_root_hidden, auto_start: text_started.append(
+        (paths, keep_root_hidden, auto_start)
+    )
+    owner._get_or_create_mode_window = lambda mode, *, hidden=True: text_window if mode == "text" else document_window
+
+    first = DroppedTaskPlan("text", [Path("a.png")], True)
+    second = DroppedTaskPlan("document", [Path("b.pdf")], True)
+    owner._pending_pet_drop_queue = [second]
+
+    assert owner._request_serial_pet_task_start(first) is True
+    assert owner._serial_active_window is owner
+    assert text_started == [("ensure", "text"), ([Path("a.png")], True, True)]
+    assert document_started == []
+
+    owner._finish_pet_drop_recognition_step(success=True)
+
+    assert owner._serial_active_window is document_window
+    assert document_started == [("ensure", "document"), ([Path("b.pdf")], True, True)]
+    assert owner.recognition_mode == "text"
+
+
+def test_pet_completion_waits_until_all_planned_tasks_finish():
+    owner = MainWindow.__new__(MainWindow)
+    owner._pet_drop_owner = owner
+    owner._serial_active_window = None
+    owner._pending_pet_drop_queue = [DroppedTaskPlan("document", [Path("b.pdf")], True)]
+    owner._pet_drop_recognition_active = True
+    owner._get_or_create_mode_window = lambda mode, *, hidden=True: owner
+    owner._window_for_drop_task = lambda plan: owner
+    owner._withdraw_root_for_pet_drop = lambda: None
+    owner.status_var = _StringVarStub()
+    owner._active_recognition_mode = lambda: "document"
+    owner._ensure_drop_recognition_mode = lambda mode, *, keep_root_hidden=False: None
+    started = []
+    completed = []
+    owner._import_dropped_images_then_start = lambda paths, *, keep_root_hidden, auto_start: started.append(
+        (paths, keep_root_hidden, auto_start)
+    )
+    owner._show_pet_drop_completion = lambda: completed.append(True)
+    owner._clear_pet_drop_recognition = lambda: None
+
+    owner._complete_pet_drop_recognition(success=True)
+
+    assert started == [([Path("b.pdf")], True, True)]
+    assert completed == []
+
+    owner._finish_pet_drop_recognition_step(success=True)
+
+    assert completed == [True]
+
+
     class _RootStub:
         def __init__(self):
             self.scheduled = []

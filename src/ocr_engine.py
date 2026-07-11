@@ -44,9 +44,6 @@ class PreprocessConfig:
     adaptive_c: float = 10.0
     denoise_mode: DenoiseMode = "none"
     denoise_kernel_size: int = 3
-    enable_deskew: bool = False
-    resize_scale: float | None = None
-    max_long_side: int | None = 4096
     save_intermediate: bool = False
     step_order: tuple[PreprocessStepName, ...] = DEFAULT_PREPROCESS_STEP_ORDER
     rotation_quarters: int = 0

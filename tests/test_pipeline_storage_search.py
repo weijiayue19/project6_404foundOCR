@@ -13,7 +13,7 @@ from src.gui.history_search_window import (
     history_upload_filter_value,
     select_history_detail_text,
 )
-from src.pipeline import load_history_bst, process_single_image
+from src.pipeline import process_single_image
 from src.search_manager import OCRSearchManager
 from src.storage_manager import OCRStorageManager
 from src.task_queue import OCRTaskQueue
@@ -102,9 +102,11 @@ def test_pipeline_saves_record_and_searches_saved_text(tmp_path, monkeypatch):
     assert full["image_name"] == "sample.png"
     assert isinstance(full["preview_image"], bytes)
 
-    history = load_history_bst(storage)
-    assert history.size() == 1
-    assert history.search_by_keyword("本地")[0].record_id == result["record_id"]
+    time_filtered = storage.query_records(
+        start_time=records[0]["created_time"],
+        end_time=records[0]["created_time"],
+    )
+    assert [record["record_id"] for record in time_filtered] == [result["record_id"]]
 
 
 def test_storage_migration_adds_layout_text_to_existing_database(tmp_path):

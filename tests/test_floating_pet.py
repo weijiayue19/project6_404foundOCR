@@ -52,6 +52,7 @@ def _pet_stub(master: _FakeMaster, *, visible: bool = True) -> FloatingDinoPet:
     pet.is_visible = lambda: visible
     pet._save_position = lambda: None
     pet._redraw = lambda: None
+    pet._sync_drag_drop_registration = lambda: None
     return pet
 
 
@@ -379,6 +380,24 @@ def test_panel_clear_restores_pre_popup_position() -> None:
     assert pet._assistant_panel == "normal"
 
 
+def test_panel_clear_reregisters_resident_pet_drop_target() -> None:
+    master = _FakeMaster()
+    pet = _pet_stub(master)
+    pet.window = _GeometryWindow(420, 425, 520, 305)
+    pet._assistant_panel = "complete"
+    pet._base_position = (760, 610)
+    pet._position = (420, 425)
+    pet._last_window_size = (520, 305)
+    lifecycle = []
+    pet._clear_overlay_widgets = lambda: lifecycle.append("unregister-overlay")
+    pet._sync_drag_drop_registration = lambda: lifecycle.append("register-resident")
+
+    pet.clear_assistant_panel()
+
+    assert lifecycle == ["unregister-overlay", "register-resident"]
+    assert pet._assistant_panel == "normal"
+
+
 def test_panel_clear_restores_saved_position_when_base_position_missing() -> None:
     master = _FakeMaster()
     pet = _pet_stub(master)
@@ -544,3 +563,34 @@ def test_floating_pet_registers_drop_target_and_forwards_drop_event() -> None:
     assert window.unregistered is True
     assert label.unregistered is True
     assert pet._drop_widgets == []
+
+
+def test_floating_pet_registers_completion_overlay_as_drop_targets() -> None:
+    master = _DndMaster()
+    window = _DndWidget()
+    label = _DndWidget()
+    close_button = _DndWidget()
+    bubble = _DndWidget()
+    done = _DndWidget()
+    return_button = _DndWidget()
+    pet = FloatingDinoPet.__new__(FloatingDinoPet)
+    pet.master = master
+    pet.window = window
+    pet.image_label = label
+    pet.drop_command = lambda _event: "break"
+    pet._dnd_files_type = "DND_Files"
+    pet._drop_accept_action = "copy"
+    pet._drop_enabled = True
+    pet._drop_widgets = []
+    pet._overlay_drop_widgets = [close_button, bubble, done, return_button]
+
+    pet._sync_drag_drop_registration()
+
+    assert pet._drop_widgets == [window, label, close_button, bubble, done, return_button]
+    for widget in pet._drop_widgets:
+        assert widget.registered_dndtypes == ("DND_Files",)
+        assert [binding[0] for binding in widget.dnd_bindings] == [
+            "<<DropEnter>>",
+            "<<DropPosition>>",
+            "<<Drop>>",
+        ]

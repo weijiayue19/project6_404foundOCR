@@ -4,9 +4,7 @@ from src.ocr_engine import OcrEngine, OcrRequest, PreprocessConfig
 from src.preprocess.binarize import adaptive_mean_threshold, binarize_otsu, global_threshold, otsu_threshold
 from src.preprocess.denoise import median_filter, remove_isolated_pixels
 from src.preprocess.grayscale import to_grayscale_array
-from src.preprocess.resize import pyramid_resize
 from src.region_selector import RegionSelector, build_preview_transform
-from src.history_manager import HistoryManager
 
 
 def test_core_preprocess_algorithms(tmp_path):
@@ -32,10 +30,6 @@ def test_core_preprocess_algorithms(tmp_path):
     assert median_filter(noisy, 3).shape == gray.shape
     assert remove_isolated_pixels(noisy).shape == gray.shape
 
-    resized = pyramid_resize(image, 2.0)
-    assert resized.size == (8, 4)
-
-
 def test_engine_preprocess_and_helpers(tmp_path):
     path = tmp_path / "sample.png"
     Image.new("RGB", (20, 10), "white").save(path)
@@ -50,7 +44,6 @@ def test_engine_preprocess_and_helpers(tmp_path):
                     binarize_mode="adaptive",
                     adaptive_window_size=3,
                     denoise_mode="median",
-                    max_long_side=50,
                 ),
             )
         )
@@ -65,10 +58,6 @@ def test_engine_preprocess_and_helpers(tmp_path):
     region = selector.finish(100, 80, transform)
     assert len(region) == 4
     assert region[2] > region[0]
-
-    history = HistoryManager()
-    entry = history.add_entry(path, "hello")
-    assert history.get_entry(entry.entry_id).text == "hello"
 
 def test_engine_respects_configured_preprocess_order(tmp_path):
     path = tmp_path / "order.png"
@@ -133,4 +122,3 @@ def test_input_transform_runs_before_region_crop(tmp_path):
         assert [step.name for step in steps] == ["region"]
     finally:
         engine.close()
-

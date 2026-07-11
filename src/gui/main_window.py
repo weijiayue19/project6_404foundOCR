@@ -1,6 +1,9 @@
 """OCR 桌面工具主窗口。"""
 
+from __future__ import annotations
+
 from collections.abc import Callable
+from dataclasses import dataclass
 import json
 import multiprocessing as mp
 import queue
@@ -33,7 +36,7 @@ from src.gui.main_window_state import (
 )
 from src.gui.main_window_ui_utils import Tooltip as _Tooltip, draw_result_action_icon as _draw_result_action_icon
 from src.gui.mini_game_window import MiniPixelGameWindow
-from src.gui.window_utils import create_independent_window
+from src.gui.window_utils import create_independent_window, focus_existing_window
 from src.gui.pixel_theme import (
     GRID,
     INK,
@@ -50,7 +53,6 @@ from src.gui.pixel_theme import (
     draw_pixel_box,
     draw_pixel_dino,
 )
-from src.history_manager import HistoryManager
 from src.image_utils import detect_upload_type, render_pdf_pages, validate_upload_path
 from src.models.ocr_result import OcrResult
 from src.ocr_engine import OcrEngine, OcrExecutionResult, OcrMode, OcrRequest, PreprocessConfig
@@ -59,6 +61,16 @@ from src.services.batch_export import build_merged_batch_text, build_separate_tx
 from src.services.batch_process import run_batch_process
 from src.storage_manager import OCRStorageManager
 from src.task_queue import OCRTask, OCRTaskQueue, TaskQueue, TaskStatus
+
+
+@dataclass(frozen=True)
+class DroppedTaskPlan:
+    """A homogeneous pet-drop task routed to one recognition mode."""
+
+    mode: OcrMode
+    paths: list[Path]
+    keep_root_hidden: bool
+    from_floating_pet: bool = True
 
 
 class MainWindow(MainWindowFloatingPetMixin):
@@ -147,11 +159,10 @@ class MainWindow(MainWindowFloatingPetMixin):
         self.region_selector = RegionSelector()
         self.selected_region: tuple[int, int, int, int] | None = None
         self.preview_transform = None
-        self.history_manager = HistoryManager()
         self.storage_manager = OCRStorageManager()
         self._floating_pet = FloatingDinoPet(
             self.root,
-            self.restore_from_pet,
+            self._restore_all_pet_drop_windows,
             drop_command=self._on_image_drop,
             drop_started_command=self._mark_floating_pet_drop_started,
             dnd_files_type=DND_FILES,
@@ -162,9 +173,13 @@ class MainWindow(MainWindowFloatingPetMixin):
         self._is_restoring_from_pet = False
         self._minimize_after_id: str | None = None
         self._mini_pixel_game_window: MiniPixelGameWindow | None = None
-        self._pending_pet_drop_queue: list[tuple[list[Path], bool]] = []
+        self._pending_pet_drop_queue: list[DroppedTaskPlan] = []
         self._pending_pet_drop_keep_root_hidden = False
         self._pet_drop_recognition_active = False
+        self._pet_drop_owner: MainWindow = self
+        self._mode_windows: dict[OcrMode, MainWindow] = {}
+        self._pet_drop_session_modes: set[OcrMode] = set()
+        self._serial_active_window: MainWindow | None = None
         self._drop_keep_root_hidden = False
         self._root_drop_enabled = False
         self._floating_pet_drop_guard_until = 0.0
@@ -474,6 +489,8 @@ class MainWindow(MainWindowFloatingPetMixin):
 
         self._clear_root()
         self.recognition_mode = mode
+        if hasattr(self, "_mode_windows"):
+            self._mode_windows[mode] = self
         self.mode_switch_var.set(DEEP_MODE_LABEL if mode == "document" else FAST_MODE_LABEL)
         self.ocr_engine = OcrEngine()
         self.task_queue = TaskQueue()
@@ -1550,6 +1567,7 @@ class MainWindow(MainWindowFloatingPetMixin):
 
         is_appending = append and bool(self.batch_image_infos)
         if is_appending:
+            self._promote_single_result_before_batch_append()
             self._forget_image_preview_state(validated_paths)
             self._ensure_image_edit_states()
             self.batch_image_paths.extend(validated_paths)
@@ -1594,6 +1612,46 @@ class MainWindow(MainWindowFloatingPetMixin):
                 previous_temporary.unlink(missing_ok=True)
             self._temporary_image_paths = temporary_set
         self._refresh_dino_for_active_mode()
+
+    def _promote_single_result_before_batch_append(self) -> None:
+        """Keep a completed one-image result when the queue becomes a batch."""
+
+        if len(getattr(self, "batch_image_infos", [])) != 1:
+            return
+        self._ensure_mode_result_storage()
+        mode = self._active_recognition_mode()
+        tasks = self._batch_tasks_by_mode.get(mode, [])
+        existing_path = self.batch_image_infos[0][0]
+        if (
+            tasks
+            and tasks[0].image_path == str(existing_path)
+            and tasks[0].status == OCRTaskQueue.FINISHED
+        ):
+            self.current_batch_tasks = tasks
+            return
+
+        cached = self._single_result_by_mode.get(mode)
+        result = cached.get("result") if cached is not None else getattr(self, "current_result", None)
+        if not isinstance(result, OcrResult):
+            return
+        task = OCRTask(
+            image_path=str(existing_path),
+            status=OCRTaskQueue.FINISHED,
+            result_text=result.render_text("plain").strip(),
+        )
+        task.extra["recognition_mode"] = mode
+        task.extra["ocr_result"] = result
+        task.extra["region"] = cached.get("region") if cached is not None else getattr(
+            self,
+            "current_recognition_region",
+            None,
+        )
+        record_id = cached.get("record_id") if cached is not None else getattr(self, "current_record_id", None)
+        if record_id is not None:
+            task.extra["record_id"] = record_id
+        task.extra["gui_recorded"] = True
+        self.current_batch_tasks = [task]
+        self._batch_tasks_by_mode[mode] = self.current_batch_tasks
 
     def _switch_to_document_mode_for_upload(self) -> None:
         if self._active_recognition_mode() == "document":
@@ -1738,7 +1796,7 @@ class MainWindow(MainWindowFloatingPetMixin):
         window.lift()
 
     def _open_user_manual(self) -> None:
-        manual_path = Path(__file__).resolve().parents[2] / "html" / "404_found_ocr_user_manual_v8.html"
+        manual_path = Path(__file__).resolve().parents[2] / "html" / "用户手册.html"
         if not manual_path.exists():
             messagebox.showerror("无法打开用户手册", f"未找到用户手册：{manual_path}")
             return
@@ -2145,6 +2203,9 @@ class MainWindow(MainWindowFloatingPetMixin):
             if not paths:
                 raise ValueError("没有检测到拖入的文件。")
             from_floating_pet = bool(getattr(event, "_from_floating_pet", False))
+            if from_floating_pet:
+                owner = self._pet_drop_owner_window()
+                owner._begin_new_pet_drop_batch()
             if self._is_recognizing and not from_floating_pet:
                 self.status_var.set("正在识别，请完成后再追加图片")
                 return COPY
@@ -2185,14 +2246,31 @@ class MainWindow(MainWindowFloatingPetMixin):
 
         self._drop_after_id = None
         try:
-            target_mode = self._mode_for_dropped_paths(paths)
             keep_root_hidden = getattr(self, "_drop_keep_root_hidden", False)
+            if from_floating_pet:
+                self._drop_keep_root_hidden = False
+                if keep_root_hidden:
+                    self._withdraw_root_for_pet_drop()
+                if self._is_recognizing or self._is_any_serial_recognizing():
+                    self._enqueue_pending_pet_drop(paths, keep_root_hidden=keep_root_hidden)
+                    return
+                plans = self._split_drop_paths_by_mode(
+                    paths,
+                    keep_root_hidden=keep_root_hidden,
+                    from_floating_pet=True,
+                )
+                if not plans:
+                    return
+                owner = self._pet_drop_owner_window()
+                owner._pet_drop_recognition_active = True
+                owner._pending_pet_drop_queue.extend(plans[1:])
+                owner._request_serial_pet_task_start(plans[0])
+                return
+
+            target_mode = self._mode_for_dropped_paths(paths)
             if self._is_recognizing:
                 self._drop_keep_root_hidden = False
-                if from_floating_pet:
-                    self._enqueue_pending_pet_drop(paths, keep_root_hidden=keep_root_hidden)
-                else:
-                    self.status_var.set("正在识别，请完成后再追加图片")
+                self.status_var.set("正在识别，请完成后再追加图片")
                 return
             if keep_root_hidden:
                 self._withdraw_root_for_pet_drop()
@@ -2200,7 +2278,7 @@ class MainWindow(MainWindowFloatingPetMixin):
             self._import_dropped_images_then_start(
                 paths,
                 keep_root_hidden=keep_root_hidden,
-                auto_start=from_floating_pet,
+                auto_start=False,
             )
         except Exception as exc:
             messagebox.showerror("无法导入图片", str(exc))
@@ -2208,6 +2286,185 @@ class MainWindow(MainWindowFloatingPetMixin):
 
     def _mode_for_dropped_paths(self, paths: list[Path]) -> OcrMode:
         return "document" if any(detect_upload_type(path) == "document" for path in paths) else "text"
+
+    def _mode_for_drop_path(self, path: Path) -> OcrMode:
+        return "document" if detect_upload_type(path) == "document" else "text"
+
+    def _split_drop_paths_by_mode(
+        self,
+        paths: list[Path],
+        *,
+        keep_root_hidden: bool,
+        from_floating_pet: bool,
+    ) -> list[DroppedTaskPlan]:
+        plans: list[DroppedTaskPlan] = []
+        current_mode: OcrMode | None = None
+        current_paths: list[Path] = []
+        for path in paths:
+            mode = self._mode_for_drop_path(path)
+            if current_mode is not None and mode != current_mode:
+                plans.append(
+                    DroppedTaskPlan(
+                        mode=current_mode,
+                        paths=current_paths,
+                        keep_root_hidden=keep_root_hidden,
+                        from_floating_pet=from_floating_pet,
+                    )
+                )
+                current_paths = []
+            current_mode = mode
+            current_paths.append(path)
+        if current_mode is not None and current_paths:
+            plans.append(
+                DroppedTaskPlan(
+                    mode=current_mode,
+                    paths=current_paths,
+                    keep_root_hidden=keep_root_hidden,
+                    from_floating_pet=from_floating_pet,
+                )
+            )
+        return plans
+
+    def _pet_drop_owner_window(self) -> MainWindow:
+        owner = getattr(self, "_pet_drop_owner", self)
+        if not hasattr(owner, "_pending_pet_drop_queue"):
+            owner._pending_pet_drop_queue = []
+        if not hasattr(owner, "_mode_windows"):
+            owner._mode_windows = {}
+        if not hasattr(owner, "_pet_drop_session_modes"):
+            owner._pet_drop_session_modes = set()
+        if not hasattr(owner, "_serial_active_window"):
+            owner._serial_active_window = None
+        if not hasattr(owner, "_pet_drop_recognition_active"):
+            owner._pet_drop_recognition_active = False
+        return owner
+
+    def _normalize_pending_pet_drop(self, queued: object) -> DroppedTaskPlan:
+        """Convert a queued item to the current serial-task representation."""
+
+        if isinstance(queued, DroppedTaskPlan):
+            return queued
+        try:
+            paths, keep_root_hidden = queued
+            normalized_paths = list(paths)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("无效的宠物拖拽队列任务。") from exc
+        if not normalized_paths:
+            raise ValueError("宠物拖拽队列任务不包含文件。")
+        return DroppedTaskPlan(
+            mode=self._mode_for_dropped_paths(normalized_paths),
+            paths=normalized_paths,
+            keep_root_hidden=bool(keep_root_hidden),
+        )
+
+    def _begin_new_pet_drop_batch(self) -> None:
+        """Leave completion state and mark a fresh pet-drop batch active."""
+
+        owner = self._pet_drop_owner_window()
+        floating_pet = getattr(owner, "_floating_pet", None)
+        clear_assistant_panel = getattr(floating_pet, "clear_assistant_panel", None)
+        if callable(clear_assistant_panel):
+            clear_assistant_panel()
+        owner._pet_drop_recognition_active = True
+
+    def _get_or_create_mode_window(self, mode: OcrMode, *, hidden: bool = True) -> MainWindow:
+        owner = self._pet_drop_owner_window()
+        if getattr(owner, "recognition_mode", None) is None or owner._active_recognition_mode() == mode:
+            owner._mode_windows[mode] = owner
+            return owner
+        existing = owner._mode_windows.get(mode)
+        if existing is not None:
+            try:
+                if existing.root.winfo_exists():
+                    return existing
+            except tk.TclError:
+                owner._mode_windows.pop(mode, None)
+        root = create_independent_window(f"本地 OCR - {self._recognition_mode_name(mode)}")
+        window = type(self)(root)
+        window._pet_drop_owner = owner
+        window._mode_windows = owner._mode_windows
+        window._floating_pet.set_drag_drop_enabled(False)
+        window._select_mode(mode)
+        owner._mode_windows[mode] = window
+        if hidden:
+            try:
+                window.root.withdraw()
+            except tk.TclError:
+                pass
+        return window
+
+    def _window_for_drop_task(self, plan: DroppedTaskPlan) -> MainWindow:
+        return self._get_or_create_mode_window(plan.mode, hidden=plan.keep_root_hidden)
+
+    def _queued_pet_drop_file_count(self) -> int:
+        owner = self._pet_drop_owner_window()
+        return sum(len(plan.paths) for plan in getattr(owner, "_pending_pet_drop_queue", []))
+
+    def _queued_pet_drop_task_count(self) -> int:
+        owner = self._pet_drop_owner_window()
+        return len(getattr(owner, "_pending_pet_drop_queue", []))
+
+    def _is_any_serial_recognizing(self) -> bool:
+        owner = self._pet_drop_owner_window()
+        return getattr(owner, "_serial_active_window", None) is not None
+
+    def _restore_all_pet_drop_windows(self) -> None:
+        owner = self._pet_drop_owner_window()
+        if getattr(owner, "_is_quitting", False) or getattr(owner, "_is_restoring_from_pet", False):
+            return
+        owner._is_restoring_from_pet = True
+        try:
+            owner._floating_pet.hide()
+            modes = set(getattr(owner, "_pet_drop_session_modes", set()))
+            modes.add(owner._active_recognition_mode())
+            for mode in modes:
+                window = owner._mode_windows.get(mode, owner if owner._active_recognition_mode() == mode else None)
+                if window is None:
+                    continue
+                try:
+                    focus_existing_window(window.root)
+                    window._set_workbench_animation_paused(False)
+                except tk.TclError:
+                    pass
+        finally:
+            try:
+                owner.root.after_idle(lambda: setattr(owner, "_is_restoring_from_pet", False))
+            except tk.TclError:
+                owner._is_restoring_from_pet = False
+
+    def _request_serial_pet_task_start(self, plan: DroppedTaskPlan) -> bool:
+        owner = self._pet_drop_owner_window()
+        if owner._is_any_serial_recognizing():
+            owner._pending_pet_drop_queue.insert(0, plan)
+            return False
+        target_window = owner._window_for_drop_task(plan)
+        owner._serial_active_window = target_window
+        owner._pet_drop_session_modes.add(plan.mode)
+        if plan.keep_root_hidden:
+            owner._withdraw_root_for_pet_drop()
+            if target_window is not owner:
+                target_window._withdraw_root_for_pet_drop()
+        target_window.status_var.set(f"正在导入待处理的 {len(plan.paths)} 个宠物拖拽文件……")
+        target_window._ensure_drop_recognition_mode(plan.mode, keep_root_hidden=plan.keep_root_hidden)
+        target_window._import_dropped_images_then_start(
+            plan.paths,
+            keep_root_hidden=plan.keep_root_hidden,
+            auto_start=True,
+        )
+        return True
+
+    def _mark_serial_recognition_finished(self, *, success: bool) -> None:
+        owner = self._pet_drop_owner_window()
+        if getattr(owner, "_serial_active_window", None) is self:
+            owner._serial_active_window = None
+        owner._complete_pet_drop_recognition(success=success)
+
+    def _finish_pet_drop_recognition_step(self, *, success: bool) -> None:
+        owner = self._pet_drop_owner_window()
+        if getattr(owner, "_serial_active_window", None) is self:
+            self._mark_serial_recognition_finished(success=success)
+        else:
+            owner._complete_pet_drop_recognition(success=success)
 
     def _ensure_drop_recognition_mode(self, mode: OcrMode, *, keep_root_hidden: bool = False) -> None:
         if self.recognition_mode is None:
@@ -2237,40 +2494,44 @@ class MainWindow(MainWindowFloatingPetMixin):
     def _enqueue_pending_pet_drop(self, paths: list[Path], *, keep_root_hidden: bool) -> None:
         if not paths:
             return
-        self._pending_pet_drop_queue.append((list(paths), keep_root_hidden))
-        pending_count = len(self._pending_pet_drop_queue)
-        file_count = sum(len(queued_paths) for queued_paths, _hidden in self._pending_pet_drop_queue)
-        self.status_var.set(f"正在识别，已将 {file_count} 个宠物拖拽文件加入待处理队列（{pending_count} 批）")
+        owner = self._pet_drop_owner_window()
+        plans = self._split_drop_paths_by_mode(
+            paths,
+            keep_root_hidden=keep_root_hidden,
+            from_floating_pet=True,
+        )
+        owner._pending_pet_drop_queue.extend(plans)
+        owner._pet_drop_recognition_active = True
+        pending_count = owner._queued_pet_drop_task_count()
+        file_count = owner._queued_pet_drop_file_count()
+        self.status_var.set(f"正在识别，已将 {file_count} 个宠物拖拽文件加入待处理队列（{pending_count} 个任务）")
         if keep_root_hidden:
-            self._withdraw_root_for_pet_drop()
+            owner._withdraw_root_for_pet_drop()
 
     def _start_next_pending_pet_drop(self) -> bool:
-        if self._is_recognizing or not self._pending_pet_drop_queue:
+        owner = self._pet_drop_owner_window()
+        if owner._is_any_serial_recognizing() or not owner._pending_pet_drop_queue:
             return False
-        paths, keep_root_hidden = self._pending_pet_drop_queue.pop(0)
-        if keep_root_hidden:
-            self._withdraw_root_for_pet_drop()
-        self.status_var.set(f"正在导入待处理的 {len(paths)} 个宠物拖拽文件……")
+        queued = owner._pending_pet_drop_queue.pop(0)
         try:
-            self._ensure_drop_recognition_mode(self._mode_for_dropped_paths(paths), keep_root_hidden=keep_root_hidden)
-            self._import_dropped_images_then_start(
-                paths,
-                keep_root_hidden=keep_root_hidden,
-                auto_start=True,
-            )
+            plan = owner._normalize_pending_pet_drop(queued)
+            return owner._request_serial_pet_task_start(plan)
         except Exception as exc:
             messagebox.showerror("无法导入图片", str(exc))
-            self.status_var.set("待处理宠物拖拽文件加载失败")
-            self._complete_pet_drop_recognition(success=False)
-        return True
+            owner.status_var.set("待处理宠物拖拽文件加载失败")
+            owner._complete_pet_drop_recognition(success=False)
+            return True
 
     def _complete_pet_drop_recognition(self, *, success: bool) -> None:
-        if self._start_next_pending_pet_drop():
+        owner = self._pet_drop_owner_window()
+        if owner._is_any_serial_recognizing():
+            return
+        if success and owner._start_next_pending_pet_drop():
             return
         if success:
-            self._show_pet_drop_completion()
+            owner._show_pet_drop_completion()
         else:
-            self._clear_pet_drop_recognition()
+            owner._clear_pet_drop_recognition()
 
     def _import_dropped_images_then_start(
         self,
@@ -2310,7 +2571,7 @@ class MainWindow(MainWindowFloatingPetMixin):
             if auto_start:
                 if added_count <= 0:
                     self._pet_drop_recognition_active = True
-                    self._complete_pet_drop_recognition(success=True)
+                    self._finish_pet_drop_recognition_step(success=True)
                     return
                 self._pet_drop_recognition_active = True
                 self.start_recognition()
@@ -3058,6 +3319,11 @@ class MainWindow(MainWindowFloatingPetMixin):
 
         if self._is_recognizing:
             return
+        owner = self._pet_drop_owner_window()
+        active_window = getattr(owner, "_serial_active_window", None)
+        if active_window is not None and active_window is not self:
+            self.status_var.set("后台识别任务正在运行，请完成后再开始新的识别")
+            return
 
         if self.image_path is None:
             messagebox.showwarning("提示", "请先选择图片。")
@@ -3085,7 +3351,7 @@ class MainWindow(MainWindowFloatingPetMixin):
                 self.status_var.set(
                     f"没有新增或待识别图片；当前{self._recognition_mode_name(self.recognition_mode)}结果已保留"
                 )
-                self._complete_pet_drop_recognition(success=True)
+                self._finish_pet_drop_recognition_step(success=True)
                 return
 
         run_total = (
@@ -3176,7 +3442,7 @@ class MainWindow(MainWindowFloatingPetMixin):
                 self._batch_process = None
                 self._finish_batch_process()
                 self._set_dino_state("error")
-                self._complete_pet_drop_recognition(success=False)
+                self._finish_pet_drop_recognition_step(success=False)
                 self.saved_status_var.set("最近保存：失败")
                 messagebox.showerror("批量识别失败", f"无法启动 OCR 独立进程：{exc}")
                 return
@@ -3225,7 +3491,7 @@ class MainWindow(MainWindowFloatingPetMixin):
                 self._update_dino_progress(len(execution), max(1, len(execution)))
                 self._set_dino_state("done")
                 self._handle_batch_result(execution)
-                self._complete_pet_drop_recognition(success=True)
+                self._finish_pet_drop_recognition_step(success=True)
                 return
             self._update_dino_progress(1, 1)
             self._set_dino_state("done")
@@ -3239,13 +3505,6 @@ class MainWindow(MainWindowFloatingPetMixin):
             self._sync_result_actions(display_text)
             self._set_copy_feedback("")
             summary = "；".join(step.description for step in execution.steps) or "未启用额外预处理"
-            self.history_manager.add_entry(
-                result.image_path,
-                display_text,
-                region=self.current_recognition_region,
-                preprocess_summary=summary,
-                elapsed_seconds=result.elapsed_seconds + execution.preprocess_seconds,
-            )
             self.current_record_id = self._save_recognition_record(
                 self.image_path or result.image_path,
                 result.render_text("plain").strip() or display_text,
@@ -3259,10 +3518,10 @@ class MainWindow(MainWindowFloatingPetMixin):
             self.status_var.set(
                 f"识别完成：{len(result.blocks)} 个文本块，预处理 {execution.preprocess_seconds:.2f} 秒，OCR {result.elapsed_seconds:.2f} 秒"
             )
-            self._complete_pet_drop_recognition(success=True)
+            self._finish_pet_drop_recognition_step(success=True)
         else:
             self._set_dino_state("error")
-            self._complete_pet_drop_recognition(success=False)
+            self._finish_pet_drop_recognition_step(success=False)
             self.current_result = None
             if target_index is not None:
                 self._store_selected_region_error(target_index, str(task_result.error))
@@ -3302,10 +3561,10 @@ class MainWindow(MainWindowFloatingPetMixin):
             self._finish_batch_process()
             if kind == "complete":
                 self._handle_batch_result(list(self.current_batch_tasks))
-                self._complete_pet_drop_recognition(success=True)
+                self._finish_pet_drop_recognition_step(success=True)
             else:
                 self._set_dino_state("error")
-                self._complete_pet_drop_recognition(success=False)
+                self._finish_pet_drop_recognition_step(success=False)
                 display_text = self._render_current_result_text()
                 self._sync_result_actions(display_text)
                 self.status_var.set(
@@ -3322,7 +3581,7 @@ class MainWindow(MainWindowFloatingPetMixin):
                 exit_code = process.exitcode
                 self._finish_batch_process()
                 self._set_dino_state("error")
-                self._complete_pet_drop_recognition(success=False)
+                self._finish_pet_drop_recognition_step(success=False)
                 self.status_var.set("批量识别进程异常退出")
                 self.saved_status_var.set("最近保存：失败")
                 messagebox.showerror("批量识别失败", f"OCR 进程异常退出（代码 {exit_code}）。")
@@ -3425,13 +3684,6 @@ class MainWindow(MainWindowFloatingPetMixin):
 
         if task.status != OCRTaskQueue.FINISHED or task.extra.get("gui_recorded"):
             return
-        self.history_manager.add_entry(
-            task.image_path,
-            task.result_text,
-            region=task.extra.get("region"),
-            preprocess_summary=str(task.extra.get("preprocess_summary", "")),
-            elapsed_seconds=float(task.extra.get("elapsed_seconds", 0.0)),
-        )
         layout_text = task.result_text
         result = task.extra.get("ocr_result")
         ocr_blocks = None
@@ -3643,6 +3895,9 @@ class MainWindow(MainWindowFloatingPetMixin):
         self._pending_pet_drop_queue = []
         self._pet_drop_recognition_active = False
         self._floating_pet.clear_assistant_panel()
+        self._mode_windows = {}
+        self._pet_drop_session_modes = set()
+        self._serial_active_window = None
         self.image_path = None
         self.batch_image_paths = []
         self.batch_image_infos = []

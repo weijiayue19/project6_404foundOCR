@@ -156,6 +156,7 @@ class FloatingDinoPet:
     def clear_assistant_panel(self) -> None:
         self._cancel_completion_auto_hide()
         if self._assistant_panel == "normal":
+            self._sync_drag_drop_registration()
             return
         self._assistant_panel = "normal"
         self._photo_cache.clear()
@@ -166,6 +167,10 @@ class FloatingDinoPet:
             x, y = self._remembered_resident_position()
             self._set_window_geometry(width, height, x=x, y=y)
         self._redraw()
+        # Clearing the completion overlay unregisters every TkDND target.
+        # Re-register the resident pet immediately so another completed batch
+        # can be followed by a fresh drop without restoring the main window.
+        self._sync_drag_drop_registration()
 
     def show(self) -> bool:
         if self.window is None or not self._window_exists():
@@ -548,7 +553,10 @@ class FloatingDinoPet:
         )
         button.place(x=158, y=258, width=210, height=44)
         self._overlay_widgets.extend([close_button, bubble, done, button])
-        self._overlay_drop_widgets.extend([bubble, done])
+        # Every visible part of the completion card must remain a drop target;
+        # otherwise a second batch only works when the file happens to land on
+        # an uncovered part of the pet window.
+        self._overlay_drop_widgets.extend([close_button, bubble, done, button])
 
     def _completion_close_button(self, window: tk.Toplevel) -> tk.Canvas:
         canvas = tk.Canvas(

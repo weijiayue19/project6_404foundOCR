@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.pipeline import DEFAULT_OPTIONS, dump_result, load_history_bst, process_single_image
+from src.pipeline import DEFAULT_OPTIONS, dump_result, process_single_image
 from src.search_manager import OCRSearchManager
 from src.task_queue import OCRTaskQueue
 
@@ -103,27 +103,26 @@ def _search_history() -> None:
 
 
 def _list_history() -> None:
-    tree = load_history_bst()
-    records = tree.inorder_traversal()
+    records = OCRSearchManager().search_records()
     if not records:
         print("暂无历史记录。")
         return
     for record in records:
-        preview = record.recognized_text[:60].replace("\n", " ")
-        print(f"{record.created_time} {record.record_id} {record.image_path} {preview}")
+        preview = str(record["snippet"]).replace("\n", " ")
+        print(f"{record['created_time']} {record['record_id']} {record['saved_image_path']} {preview}")
 
 
 def _range_search() -> None:
     start_time = input("开始时间（例如 2026-07-07T09:00:00）：").strip()
     end_time = input("结束时间（例如 2026-07-07T18:00:00）：").strip()
     try:
-        records = load_history_bst().range_search_by_time(start_time, end_time)
+        records = OCRSearchManager().search_records(start_time=start_time, end_time=end_time)
     except Exception as exc:  # noqa: BLE001
         print(f"查询失败：{exc}")
         return
     for record in records:
-        preview = record.recognized_text[:60].replace("\n", " ")
-        print(f"{record.created_time} {record.record_id} {Path(record.image_path).name} {preview}")
+        preview = str(record["snippet"]).replace("\n", " ")
+        print(f"{record['created_time']} {record['record_id']} {Path(record['saved_image_path']).name} {preview}")
     if not records:
         print("该时间范围内没有记录。")
 

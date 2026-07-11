@@ -7,14 +7,6 @@ from src.ocr_engine import OcrExecutionResult
 from src.task_queue import OCRTask, OCRTaskQueue
 
 
-class _HistoryStub:
-    def __init__(self):
-        self.paths = []
-
-    def add_entry(self, image_path, _text, **_kwargs):
-        self.paths.append(image_path)
-
-
 class _StringVarStub:
     def __init__(self):
         self.value = ""
@@ -38,7 +30,6 @@ def test_gui_drains_each_batch_result_without_waiting_for_whole_batch():
     window = MainWindow.__new__(MainWindow)
     window._batch_progress_queue = queue.Queue()
     window.current_batch_tasks = []
-    window.history_manager = _HistoryStub()
     window.status_var = _StringVarStub()
     window.batch_image_infos = [("first.png", 10, 10), ("second.png", 10, 10)]
     window.preview_image_index = 0
@@ -52,14 +43,12 @@ def test_gui_drains_each_batch_result_without_waiting_for_whole_batch():
     window._drain_batch_progress()
 
     assert window.current_batch_tasks == [first]
-    assert window.history_manager.paths == ["first.png"]
     assert window.status_var.value == "当前图片 1/2：识别完成；批量进度 1/2"
 
 
 def test_batch_record_id_is_saved_on_task_and_not_saved_twice():
     window = MainWindow.__new__(MainWindow)
     window.current_batch_tasks = []
-    window.history_manager = _HistoryStub()
     window.status_var = _StringVarStub()
     window.batch_image_infos = [("first.png", 10, 10)]
     window.preview_image_index = 0
@@ -89,7 +78,6 @@ def test_batch_record_id_is_saved_on_task_and_not_saved_twice():
             },
         )
     ]
-    assert window.history_manager.paths == ["first.png"]
     assert task.extra["record_id"] == "abc123ef"
     assert task.extra["gui_recorded"] is True
 
@@ -173,7 +161,6 @@ def test_selected_region_result_is_written_to_its_batch_slot():
     ]
     window.current_batch_tasks = []
     window.current_recognition_region = (1, 2, 8, 9)
-    window.history_manager = _HistoryStub()
     window._save_recognition_record = lambda _path, _text, **_kwargs: None
     window._render_current_result_text = lambda: "二区"
     window._sync_result_actions = lambda _text: None
@@ -199,4 +186,3 @@ def test_selected_region_result_is_written_to_its_batch_slot():
     assert window.current_batch_tasks[1].status == OCRTaskQueue.FINISHED
     assert window.current_batch_tasks[1].result_text == "二区"
     assert window.current_batch_tasks[1].extra["region"] == (1, 2, 8, 9)
-    assert window.history_manager.paths == ["second.png"]

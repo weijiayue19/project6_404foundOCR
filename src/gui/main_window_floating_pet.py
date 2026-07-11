@@ -127,7 +127,7 @@ class MainWindowFloatingPetMixin:
 
     @staticmethod
     def _drop_paths_signature(paths: list[Path]) -> tuple[str, ...]:
-        return tuple(str(path) for path in paths)
+        return tuple(path.as_posix() for path in paths)
 
     def _is_recent_floating_pet_root_drop(self, paths: list[Path]) -> bool:
         if time.monotonic() > getattr(self, "_floating_pet_drop_guard_until", 0.0):
@@ -167,7 +167,7 @@ class MainWindowFloatingPetMixin:
         self._floating_pet.show_completion_message()
 
     def _clear_pet_drop_recognition(self) -> None:
-        if self._pet_drop_recognition_active:
+        if getattr(self, "_pet_drop_recognition_active", False):
             self._floating_pet.set_state("idle")
         self._pet_drop_recognition_active = False
 

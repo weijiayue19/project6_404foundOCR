@@ -14,7 +14,6 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageOps
 
-from src.history_manager import HistoryBST, OCRHistoryRecord
 from src.image_utils import detect_upload_type, validate_image_path
 from src.preprocess.binarize import adaptive_binarize
 from src.preprocess.denoise import median_filter
@@ -192,17 +191,6 @@ def normalize_options(options: dict[str, Any] | None) -> dict[str, Any]:
     return merged
 
 
-def load_history_bst(storage_manager: OCRStorageManager | None = None) -> HistoryBST:
-    """从 SQLite 加载记录并重建 HistoryBST。"""
-
-    storage = storage_manager or OCRStorageManager()
-    tree = HistoryBST()
-    for record in storage.load_records():
-        text = str(record.get("recognized_text", ""))
-        tree.insert(_record_to_history(record, text))
-    return tree
-
-
 def _load_image(path: Path) -> Image.Image:
     with Image.open(path) as source:
         image = ImageOps.exif_transpose(source)
@@ -233,22 +221,6 @@ def _render_ocr_text(result: Any, mode: str) -> str:
         return str(render_text(mode))
     text = getattr(result, "text", result)
     return str(text)
-
-
-def _record_to_history(record: dict[str, Any], recognized_text: str) -> OCRHistoryRecord:
-    return OCRHistoryRecord(
-        record_id=str(record["record_id"]),
-        image_path=str(record.get("saved_image_path") or record.get("original_image_path", "")),
-        recognized_text=recognized_text,
-        created_time=str(record["created_time"]),
-        file_size=int(record.get("file_size", 0)),
-        extra={
-            "original_image_path": record.get("original_image_path", ""),
-            "text_path": "",
-            "image_hash": record.get("image_hash", ""),
-        },
-    )
-
 
 
 def _save_if_enabled(image: Image.Image, output_path: Path, enabled: bool) -> str | None:
