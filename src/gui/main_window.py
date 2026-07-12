@@ -10,7 +10,6 @@ import queue
 import tempfile
 import tkinter as tk
 import tkinter.font as tkfont
-import sys
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -77,6 +76,8 @@ class DroppedTaskPlan:
 
 class MainWindow(MainWindowFloatingPetMixin):
     """负责选图、后台识别和结果展示。"""
+
+    USER_MANUAL_URL = "https://weijiayue19.github.io/project6_404foundOCR/user_manual/"
 
     SETTINGS_ICON_PATH = get_resource_path("assets/settings-gear.png")
     IMAGE_TYPES = [("图片文件", "*.jpg *.jpeg *.png *.bmp")]
@@ -1798,15 +1799,8 @@ class MainWindow(MainWindowFloatingPetMixin):
         window.lift()
 
     def _open_user_manual(self) -> None:
-        manual_path = get_resource_path("html/用户手册.html")
-        if not manual_path.exists():
-            messagebox.showerror("无法打开用户手册", f"未找到用户手册：{manual_path}")
-            return
-        if sys.platform == "win32":
-            import os as _os
-            _os.startfile(str(manual_path))
-        else:
-            webbrowser.open_new_tab(manual_path.as_uri())
+        """在系统默认浏览器中打开在线用户手册（兼容 Windows 与 macOS）。"""
+        webbrowser.open_new_tab(self.USER_MANUAL_URL)
 
     def open_preprocess_settings(self) -> None:
         """打开轻量预处理设置窗口。"""
