@@ -2287,7 +2287,8 @@
       font-size: 12px !important;
     }
 
-    .macos-open-guide {
+    .macos-open-guide,
+    .windows-open-guide {
       grid-column: 1 / -1;
       margin-top: 2px;
       padding: 18px;
@@ -2295,19 +2296,22 @@
       border-left: 5px solid var(--ink);
     }
 
-    .macos-open-guide h4 {
+    .macos-open-guide h4,
+    .windows-open-guide h4 {
       margin: 0 0 6px;
       font-size: 16px;
     }
 
-    .macos-open-guide > p {
+    .macos-open-guide > p,
+    .windows-open-guide > p {
       margin: 0;
       color: var(--muted);
       font-size: 13px;
       line-height: 1.7;
     }
 
-    .macos-open-methods {
+    .macos-open-methods,
+    .windows-open-methods {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
@@ -2324,6 +2328,14 @@
       display: block;
       margin-bottom: 8px;
       font-size: 14px;
+      font-weight: 700;
+    }
+
+    .macos-open-method p {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
     }
 
     .macos-open-method ol {
@@ -2642,7 +2654,7 @@
               <div class="package-copy">
                 <span class="package-kicker">NO ENVIRONMENT SETUP · READY TO USE</span>
                 <h3>不想配置环境？安装包即将上线</h3>
-                <p>Windows 与 macOS 安装包已经确认可以成功构建，目前尚未上传到下载页。正式发布后，无需准备 Python、创建虚拟环境或手动安装依赖，选择对应系统版本即可使用。</p>
+                <p>macOS抢先体验，Windows积极适配中。无需准备 Python、创建虚拟环境或手动安装依赖，选择对应系统版本即可使用。</p>
                 <div class="package-platforms">
                   <a class="package-platform" href="https://github.com/weijiayue19/project6_404foundOCR/releases" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">
                     <span class="platform-icon" aria-hidden="true">▦</span>
@@ -2651,33 +2663,61 @@
                   </a>
                   <a class="package-platform" href="https://github.com/weijiayue19/project6_404foundOCR/releases" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">
                     <span class="platform-icon" aria-hidden="true">⌘</span>
-                    <span class="platform-copy"><strong>macOS 安装包</strong><span>即将开放下载</span></span>
+                    <span class="platform-copy"><strong>macOS 安装包</strong><span>已经开放下载</span></span>
                     <span class="platform-arrow" aria-hidden="true">↗</span>
                   </a>
                 </div>
-                <p class="package-note">安装文件上传至 GitHub Releases 后，这里将开放对应系统的下载入口。</p>
               </div>
               <aside class="macos-open-guide">
                 <h4>macOS 首次打开提示</h4>
-                <p>当前 macOS 版本尚未进行 Apple 开发者签名，系统可能提示应用无法验证或已被阻止。遇到提示时，可选择下面任一方法放行。</p>
+                <p>当前 macOS 版本尚未完成 Apple Developer ID 签名与公证。首次打开时，macOS 可能提示“无法验证开发者”或“Apple 无法检查其中是否包含恶意软件”。请仅在确认安装包来自本项目官方发布渠道时继续打开。</p>
                 <div class="macos-open-methods">
                   <div class="macos-open-method">
                     <strong>方法一：右键打开</strong>
                     <ol>
-                      <li>在“访达”的“应用程序”中找到 404 Found OCR。</li>
-                      <li>按住 Control 点击应用，或直接右键点击。</li>
-                      <li>选择“打开”，再次确认“打开”。</li>
+                      <li>将应用拖入“应用程序”文件夹。</li>
+                      <li>在“访达”→“应用程序”中找到 404 Found OCR。</li>
+                      <li>按住 Control 键点按应用图标，或右键点按应用图标。</li>
+                      <li>在菜单中选择“打开”，然后再次点击“打开”。</li>
                     </ol>
                   </div>
                   <div class="macos-open-method">
                     <strong>方法二：在系统设置中放行</strong>
                     <ol>
-                      <li>双击应用，等待系统显示拦截提示。</li>
+                      <li>双击应用，等待 macOS 显示安全提示，然后关闭提示窗口。</li>
                       <li>打开“系统设置”→“隐私与安全性”。</li>
-                      <li>在页面底部找到“已阻止使用 404 Found OCR”。</li>
-                      <li>点击“仍要打开”，输入密码或使用 Touch ID 确认。</li>
+                      <li>向下滚动至“安全性”区域，找到有关 404 Found OCR 被阻止的提示。</li>
+                      <li>点击“仍要打开”，再次确认“打开”，并按系统提示输入登录密码或进行身份验证。</li>
+                    </ol>
+                    <p>如果系统提示“应用已损坏”或“将损害你的电脑”，请不要继续放行，应重新下载安装包或联系开发者。</p>
+                  </div>
+                </div>
+              </aside>
+              <aside class="windows-open-guide">
+                <h4>Windows 安装包可能遇到的问题</h4>
+                <p>Windows 安装包因 SmartScreen、Smart App Control 或缺少运行库等原因，可能出现安装或启动拦截。请按照下列建议处理，不要绕过系统安全功能，只有确认安装包来源可信时再继续操作。</p>
+                <div class="windows-open-methods">
+                  <div class="macos-open-method">
+                    <strong>方法一：出现“Windows 已保护你的电脑”时</strong>
+                    <ol>
+                      <li>确认安装包来自本项目官方发布渠道。</li>
+                      <li>在提示窗口中点击“更多信息”。</li>
+                      <li>核对应用名称和发布者信息后，点击“仍要运行”。</li>
+                      <li>如果没有“仍要运行”选项，请不要关闭系统安全功能，建议重新下载安装包或联系开发者。</li>
                     </ol>
                   </div>
+                  <div class="macos-open-method">
+                    <strong>方法二：安装包属性中显示“解除锁定”时</strong>
+                    <ol>
+                      <li>在文件资源管理器中找到下载的安装包文件。</li>
+                      <li>右键单击安装包，选择“属性”。</li>
+                      <li>在“常规”选项卡底部找到“安全”区域。</li>
+                      <li>如果显示“解除锁定”，勾选该选项。</li>
+                      <li>点击“应用”→“确定”，然后重新运行安装包。</li>
+                    </ol>
+                    <p>此操作仅适用于下载文件被 Windows 标记为来自网络来源的情况。若系统仍因 Smart App Control 阻止未签名应用，则需要使用签名安装包或联系开发者，不应关闭整个安全功能。</p>
+                  </div>
+                  
                 </div>
               </aside>
             </article>
