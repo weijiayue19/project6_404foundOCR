@@ -76,19 +76,31 @@ class OcrService:
             # 延迟导入和初始化，让桌面窗口可以快速显示。
             from paddleocr import PaddleOCR
 
-            # 默认使用普通 OCR 小模型路径，保证桌面端响应速度。
-            self._pipeline = PaddleOCR(
-                device="cpu",
-                enable_mkldnn=False,
-                text_detection_model_name=self.TEXT_DETECTION_MODEL_NAME,
-                text_recognition_model_name=self.TEXT_RECOGNITION_MODEL_NAME,
-                # 保留方向识别，只关闭可能改变局部图像的 UVDoc 去扭曲。
-                use_doc_orientation_classify=self.USE_DOC_ORIENTATION_CLASSIFY,
-                use_doc_unwarping=self.USE_DOC_UNWARPING,
-                use_textline_orientation=self.USE_TEXTLINE_ORIENTATION,
-                text_det_limit_side_len=self.TEXT_DET_LIMIT_SIDE_LEN,
-                text_det_limit_type=self.TEXT_DET_LIMIT_TYPE,
-            )
+            kwargs = {
+                "device": "cpu",
+                "enable_mkldnn": False,
+                "use_doc_orientation_classify": self.USE_DOC_ORIENTATION_CLASSIFY,
+                "use_doc_unwarping": self.USE_DOC_UNWARPING,
+                "use_textline_orientation": self.USE_TEXTLINE_ORIENTATION,
+                "text_det_limit_side_len": self.TEXT_DET_LIMIT_SIDE_LEN,
+                "text_det_limit_type": self.TEXT_DET_LIMIT_TYPE,
+            }
+
+            # In frozen builds, point directly to bundled models so PaddleX
+            # never attempts to download from HuggingFace.
+            import sys as _sys
+            if getattr(_sys, "frozen", False):
+                from src.app_paths import get_models_dir
+                _m = get_models_dir()
+                kwargs["text_detection_model_dir"] = str(_m / self.TEXT_DETECTION_MODEL_NAME)
+                kwargs["text_recognition_model_dir"] = str(_m / self.TEXT_RECOGNITION_MODEL_NAME)
+                kwargs["textline_orientation_model_dir"] = str(_m / "PP-LCNet_x1_0_textline_ori")
+                kwargs["doc_orientation_classify_model_dir"] = str(_m / "PP-LCNet_x1_0_doc_ori")
+            else:
+                kwargs["text_detection_model_name"] = self.TEXT_DETECTION_MODEL_NAME
+                kwargs["text_recognition_model_name"] = self.TEXT_RECOGNITION_MODEL_NAME
+
+            self._pipeline = PaddleOCR(**kwargs)
             self._configure_text_detection_limits(self._pipeline)
         return self._pipeline
 

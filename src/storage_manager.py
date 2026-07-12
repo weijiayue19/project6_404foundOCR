@@ -16,6 +16,7 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
+from src.app_paths import get_data_dir
 from src.database import connect_database, default_database_path
 from src.image_utils import detect_upload_type, render_pdf_first_page
 from src.repositories.ocr_record_repository import OcrRecordRepository
@@ -26,7 +27,9 @@ class OCRStorageManager:
 
     PREVIEW_MAX_SIZE = (1600, 1200)
 
-    def __init__(self, data_dir: str | Path = "data", database_path: str | Path | None = None) -> None:
+    def __init__(self, data_dir: str | Path | None = None, database_path: str | Path | None = None) -> None:
+        if data_dir is None:
+            data_dir = get_data_dir()
         self.data_dir = Path(data_dir)
         self.database_path = Path(database_path) if database_path is not None else default_database_path(self.data_dir)
         self.connection = connect_database(self.database_path)

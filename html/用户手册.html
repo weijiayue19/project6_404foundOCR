@@ -365,7 +365,7 @@
 
     .section-number {
       color: var(--muted);
-      font-size: 12px;
+      font-size: 14px;
       font-weight: 900;
       letter-spacing: .12em;
     }
@@ -644,11 +644,12 @@
     }
 
     .interface-caption p {
-      max-width: 670px;
-      margin: 0;
+      max-width: none;
+      margin: 0 0 0 auto;
       color: var(--muted);
       font-size: 13px;
       text-align: right;
+      white-space: nowrap;
     }
 
     .mock-window {
@@ -1352,6 +1353,7 @@
       .interface-caption p {
         margin-top: 6px;
         text-align: left;
+        white-space: normal;
       }
 
       .mock-start-screen,
@@ -1474,9 +1476,13 @@
     }
 
     .media-slot.has-image {
+      padding: 0;
+      border: 0;
+      background-color: transparent;
       background-position: center;
       background-size: contain;
       background-repeat: no-repeat;
+      cursor: default;
     }
 
     .media-slot.has-image .slot-text {
@@ -2110,7 +2116,7 @@
       grid-template-columns: 44px minmax(0, 1fr) auto;
       gap: 16px;
       align-items: center;
-      margin-top: 18px;
+      margin-top: 26px;
       padding: 16px 18px;
       color: var(--ink);
       background: var(--soft);
@@ -2170,6 +2176,164 @@
       border-color: #555;
     }
 
+    .package-card {
+      display: grid;
+      grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+      gap: 26px;
+      align-items: center;
+      margin-top: 32px;
+      padding: 22px;
+      color: var(--ink);
+      background: var(--panel);
+      border: 1px solid var(--grid);
+      border-radius: 0;
+      box-shadow: 8px 8px 0 var(--soft);
+    }
+
+    .package-cover {
+      overflow: hidden;
+      aspect-ratio: 1;
+      background: var(--paper);
+      border: 1px solid var(--grid);
+      border-radius: 0;
+    }
+
+    .package-cover img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .package-kicker {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .12em;
+    }
+
+    .package-copy h3 {
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 22px;
+    }
+
+    .package-copy > p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    .package-platforms {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .package-platform {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 68px;
+      padding: 10px 12px;
+      color: var(--ink);
+      background: var(--paper);
+      border: 1px solid var(--grid);
+      border-radius: 0;
+      text-decoration: none;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+
+    .package-platform:hover {
+      background: var(--soft);
+      border-color: var(--ink);
+    }
+
+    .package-platform[aria-disabled="true"] {
+      cursor: default;
+      opacity: .68;
+      pointer-events: none;
+    }
+
+    .platform-icon {
+      display: grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      color: var(--panel);
+      background: var(--ink);
+      border-radius: 0;
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .platform-copy strong,
+    .platform-copy span {
+      display: block;
+    }
+
+    .platform-copy strong { font-size: 14px; }
+    .platform-copy span { margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .platform-arrow { color: var(--ink); font-size: 18px; font-weight: 900; }
+
+    .package-note {
+      margin-top: 14px !important;
+      color: var(--muted) !important;
+      font-size: 12px !important;
+    }
+
+    .macos-open-guide {
+      grid-column: 1 / -1;
+      margin-top: 2px;
+      padding: 18px;
+      background: var(--paper);
+      border-left: 5px solid var(--ink);
+    }
+
+    .macos-open-guide h4 {
+      margin: 0 0 6px;
+      font-size: 16px;
+    }
+
+    .macos-open-guide > p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .macos-open-methods {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .macos-open-method {
+      padding: 14px;
+      background: var(--panel);
+      border: 1px solid var(--grid);
+    }
+
+    .macos-open-method strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .macos-open-method ol {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.8;
+    }
+
     .game-controls button:disabled {
       cursor: not-allowed;
       opacity: .42;
@@ -2188,6 +2352,18 @@
       .launch-recommendation > code {
         grid-column: 2;
         width: fit-content;
+      }
+
+      .package-card {
+        grid-template-columns: 180px minmax(0, 1fr);
+      }
+
+      .package-platforms {
+        grid-template-columns: 1fr;
+      }
+
+      .macos-open-methods {
+        grid-template-columns: 1fr;
       }
     }
 
@@ -2210,6 +2386,16 @@
 
       .launch-recommendation > code {
         grid-column: 1;
+      }
+
+      .package-card {
+        grid-template-columns: 1fr;
+        padding: 16px;
+      }
+
+      .package-cover {
+        width: min(100%, 260px);
+        margin: 0 auto;
       }
     }
 </style>
@@ -2398,7 +2584,7 @@
           <div class="section-head">
             <span class="section-number">02 / START</span>
             <h2>安装与启动</h2>
-            <p>目前项目以本地运行方式提供。跟着下面几步配置，很快就能把界面打开。</p>
+            <p>目前可按开发环境方式在本地运行；Windows 与 macOS 安装包已完成方案验证，即将开放下载。</p>
           </div>
 
           <div class="panel pixel-frame">
@@ -2448,13 +2634,60 @@
                 <button class="command-copy" type="button" data-copy="python app.py" aria-label="复制推荐启动命令">复制</button>
               </div>
             </div>
+
+            <article class="package-card">
+              <div class="package-cover">
+                <img src="assets/app图.png" alt="404 Found OCR 软件封面图" />
+              </div>
+              <div class="package-copy">
+                <span class="package-kicker">NO ENVIRONMENT SETUP · READY TO USE</span>
+                <h3>不想配置环境？安装包即将上线</h3>
+                <p>Windows 与 macOS 安装包已经确认可以成功构建，目前尚未上传到下载页。正式发布后，无需准备 Python、创建虚拟环境或手动安装依赖，选择对应系统版本即可使用。</p>
+                <div class="package-platforms">
+                  <a class="package-platform" href="https://github.com/weijiayue19/project6_404foundOCR/releases" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">
+                    <span class="platform-icon" aria-hidden="true">▦</span>
+                    <span class="platform-copy"><strong>Windows 安装包</strong><span>即将开放下载</span></span>
+                    <span class="platform-arrow" aria-hidden="true">↗</span>
+                  </a>
+                  <a class="package-platform" href="https://github.com/weijiayue19/project6_404foundOCR/releases" target="_blank" rel="noopener" aria-disabled="true" tabindex="-1">
+                    <span class="platform-icon" aria-hidden="true">⌘</span>
+                    <span class="platform-copy"><strong>macOS 安装包</strong><span>即将开放下载</span></span>
+                    <span class="platform-arrow" aria-hidden="true">↗</span>
+                  </a>
+                </div>
+                <p class="package-note">安装文件上传至 GitHub Releases 后，这里将开放对应系统的下载入口。</p>
+              </div>
+              <aside class="macos-open-guide">
+                <h4>macOS 首次打开提示</h4>
+                <p>当前 macOS 版本尚未进行 Apple 开发者签名，系统可能提示应用无法验证或已被阻止。遇到提示时，可选择下面任一方法放行。</p>
+                <div class="macos-open-methods">
+                  <div class="macos-open-method">
+                    <strong>方法一：右键打开</strong>
+                    <ol>
+                      <li>在“访达”的“应用程序”中找到 404 Found OCR。</li>
+                      <li>按住 Control 点击应用，或直接右键点击。</li>
+                      <li>选择“打开”，再次确认“打开”。</li>
+                    </ol>
+                  </div>
+                  <div class="macos-open-method">
+                    <strong>方法二：在系统设置中放行</strong>
+                    <ol>
+                      <li>双击应用，等待系统显示拦截提示。</li>
+                      <li>打开“系统设置”→“隐私与安全性”。</li>
+                      <li>在页面底部找到“已阻止使用 404 Found OCR”。</li>
+                      <li>点击“仍要打开”，输入密码或使用 Touch ID 确认。</li>
+                    </ol>
+                  </div>
+                </div>
+              </aside>
+            </article>
           </div>
         </section>  
         <section id="workflow">
           <div class="section-head">
             <span class="section-number">03 / WORKFLOW</span>
-            <h2>从图片到文字，走一遍</h2>
-            <p>不用记复杂步骤，照着真实操作顺序往下走就可以。</p>
+            <h2>从图片到文字的完整流程</h2>
+            <p>不用记住复杂步骤，照着真实操作顺序就可以轻松理解。</p>
           </div>
 
           <div class="steps">
@@ -2491,7 +2724,7 @@
                 <h3>开始识别</h3>
                 <p>点击“识别整图/识别文档”，或对已框选区域点击“识别选区”；图片载入后也可按Enter直接开始。</p>
               </div>
-              <span class="result">状态条会告诉你：等待、处理中或已完成</span>
+              <span class="result">状态条会显示：等待、处理中或已完成</span>
             </article>
             <article class="step">
               <div>
@@ -2513,10 +2746,10 @@
         <section id="buttons">
           <div class="section-head">
             <span class="section-number">04 / INTERFACE GUIDE</span>
-            <h2>在真实界面中认识每一个功能键</h2>
+            <h2>认识每一个功能键</h2>
             <p>
-              这一部分按照启动页、OCR工作台和历史查询窗口的真实布局进行定位。
-              界面中的黑白编号都可以点击，像查地图坐标一样，一键跳到对应功能说明。
+              按照启动页、OCR工作台和历史查询窗口的真实布局进行定位。
+              界面中的黑白编号都可以点击，一键跳到对应功能说明。
             </p>
           </div>
 
@@ -2525,7 +2758,7 @@
           ====================================================== -->
           <div class="interface-guide">
             <div class="interface-caption">
-              <h3>A. 启动页功能定位</h3>
+              <h3>A. 启动页</h3>
               <p>用户打开程序后首先来到这里：左侧小恐龙负责热场，右侧两张卡片负责选择识别模式，右下角则是直达历史记录的快捷入口。</p>
             </div>
 
@@ -2621,7 +2854,7 @@
           ====================================================== -->
           <div class="interface-guide" style="margin-top:30px;">
             <div class="interface-caption">
-              <h3>B. OCR 主工作台功能定位</h3>
+              <h3>B. OCR 主工作台</h3>
               <p>工作台把各项任务分了区：顶部负责发号施令，左侧照看图片，右侧接收文字，中间的小恐龙状态条负责报告进度。</p>
             </div>
 
@@ -2712,7 +2945,7 @@
             </div>
 
             <p class="interface-help">
-              定位方法：先在上方界面找到编号，再在下方查找相同编号。这样用户能够同时看到按钮所在区域、相邻控件和具体作用。
+              定位方法：先在上方界面找到编号，再在下方查找相同编号。
             </p>
 
             <div class="control-guide-list">
@@ -2735,7 +2968,7 @@
 
               <article class="control-guide-item" id="control-07">
                 <span class="guide-number">07</span><div>
-                  <h4>＋ 添加图片 / ＋ 添加文档</h4><span class="location">界面位置：主工具栏最左侧</span>
+                  <h4>添加图片 /  添加文档</h4><span class="location">界面位置：主工具栏最左侧</span>
                   <p><strong>作用：</strong>选择一个或多个本地文件，追加到当前队列。</p>
                   <p><strong>使用方式：</strong>快速模式选择图片；深度模式可选择图片和 PDF。</p>
                   <p><strong>结果：</strong>文件进入预览和缩略图队列，但不会自动开始识别。</p>
@@ -2762,7 +2995,7 @@
 
               <article class="control-guide-item" id="control-10">
                 <span class="guide-number">10</span><div>
-                  <h4>▶ 识别整图 / ▶ 识别文档</h4><span class="location">界面位置：主工具栏黑色主要按钮</span>
+                  <h4> 识别整图 /  识别文档</h4><span class="location">界面位置：主工具栏黑色主要按钮</span>
                   <p><strong>作用：</strong>启动当前图片、当前队列或 PDF 文档的 OCR 任务。</p>
                   <p><strong>使用方式：</strong>检查顺序、方向、选区和预处理后点击，也可按 Enter。</p>
                   <p><strong>结果：</strong>状态条开始运动，完成后右侧显示文本并写入历史库。</p>
@@ -3048,11 +3281,6 @@
             </div>
           </div>
 
-          <div class="note success">
-            <strong>最终替换真实截图的方法：</strong>
-            当前界面图是依据现有 Tkinter 结构制作的可读示意图。答辩定稿时，可将每个“mock-window”整体替换为真实高清截图，
-            再使用相同编号制作定位标注；下方说明文字无需重写。
-          </div>
         </section>
 
 
@@ -3060,7 +3288,7 @@
           <div class="section-head">
             <span class="section-number">05 / SHORTCUTS</span>
             <h2>快捷操作与特殊交互</h2>
-            <p>除了逐个点按钮，还可以拖拽、粘贴和使用键盘快捷操作，让手指少绕几次路。</p>
+            <p>除了逐个点按钮，还可以拖拽、粘贴和使用键盘快捷操作。</p>
           </div>
 
           <div class="shortcut-grid">
@@ -3070,8 +3298,8 @@
             <article class="shortcut"><kbd>拖拽</kbd><strong>追加文件</strong><span>把一张或多张受支持文件拖入窗口，只导入预览，不自动识别。</span></article>
             <article class="shortcut"><kbd>滚轮</kbd><strong>浏览 PDF</strong><span>PDF 多页预览支持鼠标滚轮、触控板和上下键。</span></article>
             <article class="shortcut"><kbd>长按</kbd><strong>调整缩略图</strong><span>长按缩略图并拖动，改变批量识别和导出的执行顺序。</span></article>
-            <article class="shortcut"><kbd>J</kbd> / <kbd>D</kbd><strong>小恐龙加速</strong><span>独立小恐龙窗中也可使用右方向键。</span></article>
-            <article class="shortcut"><kbd>K</kbd> / <kbd>W</kbd><strong>小恐龙跳跃</strong><span>独立小恐龙窗中也可使用空格或上方向键。</span></article>
+            <article class="shortcut"><kbd>J</kbd><strong>小恐龙加速</strong><span>独立小恐龙窗中也可使用右方向键。</span></article>
+            <article class="shortcut"><kbd>K</kbd><strong>小恐龙跳跃</strong><span>独立小恐龙窗中也可使用空格或上方向键。</span></article>
           </div>
         </section>
 
@@ -3113,9 +3341,6 @@
           </div>
 
           <div class="shot-grid interface-shots" style="margin-top:16px;">
-            <!-- 正式替换示例：
-            <figure class="media-slot has-image" style="background-image:url('assets/start-screen.png')">...</figure>
-            -->
             <figure class="media-slot has-image" style="--shot-ratio:1.48; background-image:url('assets/启动页.png')">
               <div class="slot-text"><strong>启动页截图</strong></div>
             </figure>
@@ -3179,7 +3404,7 @@
             <header>
               <div>
                 <h3>PIXEL DINO · 网页交互预览</h3>
-                <p>场景比例、移动速度与跳跃参数按项目启动页 PixelScene 对齐；使用 J / D / → 加速，K / W / ↑ / Space 跳跃。</p>
+                <p>场景比例、移动速度与跳跃参数按项目启动页 PixelScene 对齐；使用 J 加速，K 跳跃。</p>
               </div>
               <div class="score" id="score-label">RUN 0000</div>
             </header>
@@ -3189,7 +3414,7 @@
               <button class="pixel-button small" id="run-btn" type="button" disabled>J · 加速</button>
               <button class="pixel-button small" id="jump-btn" type="button" disabled>K · 跳跃</button>
               <button class="pixel-button small" id="reset-btn" type="button" disabled>重新开始</button>
-              <span id="game-status">点击“开始游戏”后，小恐龙才会开始奔跑。</span>
+              <span id="game-status">点击“开始游戏”后，小恐龙才会开始跑。</span>
             </div>
           </div>
 
@@ -3207,7 +3432,7 @@
           <div class="section-head">
             <span class="section-number">08 / HOW IT WORKS</span>
             <h2>用户操作背后的工作原理</h2>
-            <p>按下一次识别，背后会发生什么？这里不堆代码，只把这段旅程讲明白。</p>
+            <p>按下一次识别，会发生什么？</p>
           </div>
 
           <div class="architecture">
@@ -3315,7 +3540,7 @@
               <h3>项目入口</h3>
               <p><a href="https://github.com/weijiayue19/project6_404foundOCR" target="_blank" rel="noopener">GitHub Repository ↗</a></p>
               <p>文档版本：v19</p>
-              <p>更新时间：2026-07-11</p>
+              <p>更新时间：2026-07-12</p>
             </div>
           </div>
         </footer>

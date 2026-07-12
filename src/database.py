@@ -5,7 +5,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-DEFAULT_DATA_DIR = Path("data")
+from src.app_paths import get_data_dir
+
 DEFAULT_DATABASE_NAME = "ocr_records.db"
 
 SCHEMA_SQL = """
@@ -53,7 +54,9 @@ MIGRATIONS = {
 }
 
 
-def default_database_path(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
+def default_database_path(data_dir: str | Path | None = None) -> Path:
+    if data_dir is None:
+        data_dir = get_data_dir()
     return Path(data_dir) / DEFAULT_DATABASE_NAME
 
 

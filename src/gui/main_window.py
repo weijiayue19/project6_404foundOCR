@@ -10,6 +10,7 @@ import queue
 import tempfile
 import tkinter as tk
 import tkinter.font as tkfont
+import sys
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -24,6 +25,7 @@ except ImportError:
     COPY = "copy"
     DND_FILES = None
 
+from src.app_paths import get_resource_path
 from src.gui.floating_pet import FloatingDinoPet
 from src.gui.history_search_window import open_history_search_window
 from src.gui.main_window_floating_pet import MainWindowFloatingPetMixin
@@ -76,7 +78,7 @@ class DroppedTaskPlan:
 class MainWindow(MainWindowFloatingPetMixin):
     """负责选图、后台识别和结果展示。"""
 
-    SETTINGS_ICON_PATH = Path(__file__).resolve().parents[2] / "assets" / "settings-gear.png"
+    SETTINGS_ICON_PATH = get_resource_path("assets/settings-gear.png")
     IMAGE_TYPES = [("图片文件", "*.jpg *.jpeg *.png *.bmp")]
     DOCUMENT_TYPES = [("图片或 PDF 文档", "*.jpg *.jpeg *.png *.bmp *.pdf")]
     PREVIEW_SOURCE_MAX_SIZE = (1600, 1200)
@@ -1796,11 +1798,15 @@ class MainWindow(MainWindowFloatingPetMixin):
         window.lift()
 
     def _open_user_manual(self) -> None:
-        manual_path = Path(__file__).resolve().parents[2] / "html" / "用户手册.html"
+        manual_path = get_resource_path("html/用户手册.html")
         if not manual_path.exists():
             messagebox.showerror("无法打开用户手册", f"未找到用户手册：{manual_path}")
             return
-        webbrowser.open_new_tab(manual_path.as_uri())
+        if sys.platform == "win32":
+            import os as _os
+            _os.startfile(str(manual_path))
+        else:
+            webbrowser.open_new_tab(manual_path.as_uri())
 
     def open_preprocess_settings(self) -> None:
         """打开轻量预处理设置窗口。"""

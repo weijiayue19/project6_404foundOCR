@@ -1,5 +1,9 @@
 """应用唯一入口：启动 Tkinter 主窗口。"""
 
+import multiprocessing
+
+multiprocessing.freeze_support()
+
 from src.gui.app_bootstrap import configure_runtime_environment, create_root, enable_high_dpi_mode
 
 configure_runtime_environment()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 import tkinter as tk
 
 try:
@@ -27,12 +28,92 @@ _ROOT_DND_METHODS = (
 )
 
 
-# 必须在导入 PaddleOCR 相关模块之前设置：Windows CPU 环境关闭
-# oneDNN/MKLDNN 优化路径，规避 ConvertPirAttribute2RuntimeAttribute 异常。
 def configure_runtime_environment() -> None:
+    """Set environment variables and frozen-bundle compatibility patches.
+
+    Must be called BEFORE importing any PaddleOCR / PaddleX modules.
+
+    The key fix for frozen (PyInstaller) builds:
+    - ``hooks/runtime_hook.py`` already patched ``importlib.metadata.version``
+      so that ``is_dep_available()`` returns True for all bundled packages.
+    - We additionally pre-import cv2 and pyclipper so they are in
+      ``sys.modules`` before any PaddleX code tries to access them.
+    - We also patch ``is_dep_available`` directly as a redundant safety net.
+    """
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["FLAGS_use_mkldnn"] = "0"
     os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "False"
+
+    if not getattr(sys, "frozen", False):
+        return
+
+    # ── Frozen-bundle compatibility ─────────────────────────────────────
+    _frozen_bootstrap()
+
+
+def _frozen_bootstrap() -> None:
+    """Apply frozen-bundle compatibility patches.
+
+    This runs after the PyInstaller runtime hook has already patched
+    ``importlib.metadata.version``.  We now pre-import critical modules
+    and add a redundant patch on ``is_dep_available`` for defence in depth.
+    """
+    _patch_log = []
+
+    try:
+        # 1. Pre-import critical modules — they must be in sys.modules
+        #    before PaddleX's lazy imports try to access them.
+        import cv2  # noqa: F401
+        import pyclipper  # noqa: F401
+        _patch_log.append(f"cv2 {cv2.__version__} imported")
+
+    except Exception as exc:
+        _patch_log.append(f"PRE-IMPORT FAILED: {exc}")
+        _write_log(_patch_log)
+        return
+
+    try:
+        # 2. Patch is_dep_available as a redundant safety net.
+        #    The runtime hook already patched importlib.metadata.version,
+        #    so this should never actually be needed — but it's cheap and
+        #    guarantees correctness even if some code path bypasses
+        #    get_dep_version.
+        from paddlex.utils.deps import is_dep_available as _orig
+
+        _HEAVYWEIGHT = {
+            "paddlepaddle", "onnxruntime", "torch",
+            "tensorflow", "paddle-custom-device",
+        }
+
+        def _frozen_is_dep(dep, **kw):
+            if dep in _HEAVYWEIGHT:
+                return _orig(dep, **kw)
+            return True
+
+        import paddlex.utils.deps as _pxd
+        _pxd.is_dep_available = _frozen_is_dep
+
+        # Clear lru_cache to forget any stale False results
+        for _attr in ("is_dep_available", "is_extra_available"):
+            _fn = getattr(_pxd, _attr, None)
+            if _fn is not None and hasattr(_fn, "cache_clear"):
+                _fn.cache_clear()
+
+        _patch_log.append("is_dep_available patched")
+
+    except Exception as exc:
+        _patch_log.append(f"PADDLEX PATCH FAILED: {exc}")
+
+    _write_log(_patch_log)
+
+
+def _write_log(lines: list[str]) -> None:
+    """Write bootstrap log to a temp file for debugging frozen builds."""
+    try:
+        with open("/tmp/ocrtool_bootstrap.log", "w") as f:
+            f.write("\n".join(lines))
+    except Exception:
+        pass
 
 
 def _install_tkdnd_root_methods(root: tk.Tk) -> None:
@@ -59,7 +140,10 @@ def _install_tkdnd_root_methods(root: tk.Tk) -> None:
 def create_root() -> tk.Tk:
     """Create the root hidden, then add drag-and-drop support when available."""
 
-    root = tk.Tk()
+    # On macOS .app bundles Tk may crash inside TkpSetMainMenubar when the
+    # application name passed to NSMenuItem is empty.  Explicitly passing a
+    # className prevents Tk from reading a nil/empty CFBundleName.
+    root = tk.Tk(className="404 Found OCR")
     root._tkdnd_enabled = False
     root.withdraw()
 

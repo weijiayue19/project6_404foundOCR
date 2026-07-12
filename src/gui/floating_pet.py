@@ -12,6 +12,7 @@ import tkinter as tk
 
 from PIL import Image, ImageColor, ImageDraw, ImageTk
 
+from src.app_paths import get_data_dir
 from src.gui.pixel_theme import DINO_SPRITE, GRID, INK, PANEL, PAPER, CutCornerButton, draw_pixel_box
 
 
@@ -48,7 +49,7 @@ class FloatingDinoPet:
     DROP_DISPATCH_DELAY_MS = 30
     COMPLETION_AUTO_HIDE_MS = 10_000
     TRANSPARENT_COLOR_KEY = "#010203"
-    POSITION_STATE_PATH = Path("data/gui_state/floating_pet_position.json")
+    POSITION_STATE_PATH = get_data_dir() / "gui_state" / "floating_pet_position.json"
     _DND_METHODS = (
         "_substitute_dnd",
         "_dnd_bind",
