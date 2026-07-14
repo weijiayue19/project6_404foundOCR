@@ -172,7 +172,7 @@
 
     .brand-mark {
       display: grid;
-      grid-template-columns: 48px 1fr;
+      grid-template-columns: 57px 1fr;
       gap: 14px;
       align-items: center;
       padding-bottom: 22px;
@@ -181,15 +181,16 @@
 
     .brand-dino {
       display: grid;
-      grid-template-columns: repeat(8, 5px);
-      grid-template-rows: repeat(8, 5px);
-      width: 40px;
-      height: 40px;
+      grid-template-columns: repeat(19, 3px);
+      grid-template-rows: repeat(18, 3px);
+      width: 57px;
+      height: 54px;
       image-rendering: pixelated;
     }
 
-    .brand-dino i { background: transparent; }
+    .brand-dino i { width: 3px; height: 3px; background: transparent; }
     .brand-dino i.on { background: var(--panel); }
+    .brand-dino i.eye { background: transparent; }
 
     .brand-mark strong {
       display: block;
@@ -2457,16 +2458,7 @@
   <div class="layout">
     <aside class="sidebar">
       <div class="brand-mark">
-        <div class="brand-dino" aria-hidden="true">
-          <i></i><i></i><i></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i>
-          <i></i><i></i><i></i><i class="on"></i><i class="on"></i><i></i><i class="on"></i><i></i>
-          <i></i><i></i><i></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i>
-          <i class="on"></i><i></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i>
-          <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i>
-          <i></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i>
-          <i></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i></i><i></i>
-          <i></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i></i><i></i>
-        </div>
+        <div class="brand-dino" aria-hidden="true"></div>
         <div>
           <strong>404 FOUND OCR</strong>
           <span>USER MANUAL · V5.6</span>
@@ -3750,6 +3742,22 @@
       "    ##    ##       ",
       "    ##    ##       "
     ];
+
+    function initBrandDinos() {
+      document.querySelectorAll('.brand-dino').forEach(mark => {
+        mark.replaceChildren();
+        DINO.forEach(row => {
+          [...row].forEach(cell => {
+            const pixel = document.createElement('i');
+            if (cell === '#') pixel.className = 'on';
+            if (cell === '.') pixel.className = 'eye';
+            mark.appendChild(pixel);
+          });
+        });
+      });
+    }
+
+    initBrandDinos();
 
     function drawDino(ctx, x, y, pixel, color, eye, frame = 0) {
       DINO.forEach((row, ry) => {
