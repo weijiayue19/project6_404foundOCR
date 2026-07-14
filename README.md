@@ -15,7 +15,7 @@
 
 ### 下载安装包
 
-- macOS：前往仓库的 [Releases 页面](https://github.com/weijiayue19/project6/releases) 下载最新的 DMG 安装包并安装。
+- macOS：前往仓库的 [Releases 页面](https://github.com/weijiayue19/project6_404foundOCR/releases) 下载最新的 DMG 安装包并安装。
 - Windows：安装包稍后上传，敬请期待。
 
 macOS 安装包当前未进行 Apple 开发者签名。如果首次启动被系统拦截，可右键应用并选择“打开”，或前往“系统设置 → 隐私与安全性”选择“仍要打开”。
